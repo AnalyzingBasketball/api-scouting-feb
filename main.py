@@ -394,6 +394,19 @@ def generar_html_quintetos(ruta_pbp_clean, ruta_box_clean, match_id, equipo_loca
         for _, r in df_maestro.iterrows(): lista_maestro.append({'name': str(r['Player']).strip().upper(), 'pos': str(r['Position']).strip()})
     except: pass
 
+    global map_role_id, map_role_name
+    if not map_role_id:
+        try:
+            df_roles = pd.read_csv(FILE_ROLES)
+            for _, r in df_roles.iterrows():
+                p_id = str(r.get('PLAYER_ID', '')).strip()
+                if p_id.endswith('.0'): p_id = p_id[:-2]
+                role_name = str(r.get('ROLE_NAME', 'N/A'))
+                map_role_id[p_id] = role_name
+                map_role_name[remove_accents(str(r.get('PLAYER_NAME', '')).lower().strip())] = role_name
+        except:
+            pass
+
     dict_roles = {}
     for _, r in df_box.iterrows():
         pid = str(r.get('Player_ID', ''))
