@@ -13,9 +13,10 @@ from fastapi.middleware.cors import CORSMiddleware
 import uvicorn
 
 # ==============================================================================
-# 1. CONFIGURACIÓN Y RUTAS GLOBALES
+# 1. CONFIGURACIÓN Y RUTAS 
 # ==============================================================================
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+# AQUÍ ESTABA EL ERROR: RESTAURADO A TU RUTA ORIGINAL dataTFM
 DATA_DIR = os.path.join(BASE_DIR, "dataTFM")
 REPORTS_DIR = os.path.join(DATA_DIR, "reports")
 
@@ -30,8 +31,29 @@ HEADERS_WEB = {'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) Ap
 BASE_URL = "https://www.feb.es"
 
 FILE_ROLES = os.path.join(DATA_DIR, "PLAYER_ROLES_FINAL_2526.csv")
-FILE_CALENDAR = os.path.join(DATA_DIR, "calendario_maestro_primerafeb_2025.csv")
-FILE_LOGOS = os.path.join(DATA_DIR, "logos_equipos.json")
+
+# Variables globales para los roles
+map_role_id = {}
+map_role_name = {}
+
+def cargar_roles():
+    """Carga los roles en el momento exacto de la petición para asegurar que existen"""
+    global map_role_id, map_role_name
+    map_role_id.clear()
+    map_role_name.clear()
+    try:
+        if os.path.exists(FILE_ROLES):
+            df_roles = pd.read_csv(FILE_ROLES)
+            for _, r in df_roles.iterrows():
+                pid = str(r.get('PLAYER_ID', '')).strip()
+                if pid.endswith('.0'): pid = pid[:-2]
+                role = str(r.get('ROLE_NAME', 'N/A'))
+                map_role_id[pid] = role
+                
+                pname = remove_accents(str(r.get('PLAYER_NAME', '')).lower().strip())
+                map_role_name[pname] = role
+    except Exception as e:
+        print(f"⚠️ No se pudo cargar el archivo de roles: {e}")
 
 # ==============================================================================
 # 2. FUNCIONES DE AYUDA GLOBALES
@@ -56,6 +78,14 @@ def formatear_nombre_jugador(nombre):
     partes = nombre.split('. ', 1)
     if len(partes) == 2: return f"{partes[0].upper()}. {partes[1].title()}"
     return nombre.title()
+
+def get_short_name(full_name):
+    if pd.isna(full_name) or full_name == 'Unknown': return "Unknown"
+    partes = str(full_name).strip().split(" ")
+    particulas = ['mc', 'mac', 'de', 'del', 'la', 'las', 'los', 'san', 'van', 'von', 'da', 'di']
+    if len(partes) > 2 and partes[1].lower() in particulas:
+        return " ".join(partes[:4]) if len(partes) > 3 and partes[2].lower() in particulas else " ".join(partes[:3])
+    else: return " ".join(partes[:2]) if len(partes) >= 2 else full_name
 
 def get_image_base64(path):
     try:
@@ -115,23 +145,6 @@ def match_team_name(target_name, available_names):
             best_match = cand
     return best_match
 
-def cargar_roles_m12():
-    map_role_id = {}
-    map_role_name = {}
-    if os.path.exists(FILE_ROLES):
-        try:
-            df_r = pd.read_csv(FILE_ROLES)
-            for _, r in df_r.iterrows():
-                pid = safe_id(r.get('PLAYER_ID', ''))
-                role = str(r.get('ROLE_NAME', 'N/A'))
-                map_role_id[pid] = role
-                
-                pname = remove_accents(str(r.get('PLAYER_NAME', '')).lower().strip())
-                map_role_name[pname] = role
-        except:
-            pass
-    return map_role_id, map_role_name
-
 # ==============================================================================
 # 3. SCRAPING Y LIMPIEZA DE PARTIDOS
 # ==============================================================================
@@ -146,7 +159,7 @@ def extraer_diccionario_logos():
                 url_logo = img.get("src")
                 if url_logo.startswith("/"): url_logo = "https://www.feb.es" + url_logo
                 diccionario[a.text.strip()] = url_logo
-        with open(FILE_LOGOS, "w", encoding="utf-8") as f:
+        with open(os.path.join(DATA_DIR, "logos_equipos.json"), "w", encoding="utf-8") as f:
             json.dump(diccionario, f, ensure_ascii=False, indent=4)
     except: pass
 
@@ -174,7 +187,7 @@ def construir_calendario_maestro():
                         "equipo_local": a_eq[0].get_text(strip=True), "equipo_visitante": a_eq[-1].get_text(strip=True),
                         "resultado": a_p.get_text(strip=True)
                     })
-        pd.DataFrame(datos).drop_duplicates(subset=['match_id']).to_csv(FILE_CALENDAR, index=False, encoding='utf-8-sig')
+        pd.DataFrame(datos).drop_duplicates(subset=['match_id']).to_csv(os.path.join(DATA_DIR, "calendario_maestro_primerafeb_2025.csv"), index=False, encoding='utf-8-sig')
     except: pass
 
 def extraer_maestro_jugadores():
@@ -235,8 +248,10 @@ def extraer_maestro_jugadores():
     if lista: pd.DataFrame(lista).drop_duplicates(subset=['Player', 'Team']).to_csv(os.path.join(DATA_DIR, "maestro_jugadores_primerafeb.csv"), index=False, encoding='utf-8-sig')
 
 def obtener_partidos_jornada(jornada_id):
-    res = requests.get("https://www.feb.es/competiciones/calendario/primerafeb/1/2025", headers=HEADERS_WEB)
+    url_calendario = f"https://www.feb.es/competiciones/calendario/primerafeb/1/2025" 
+    res = requests.get(url_calendario, headers=HEADERS_WEB)
     soup = BeautifulSoup(res.text, 'html.parser')
+    
     datos_partidos = []
     for col in soup.find_all('div', class_='columna'):
         h1 = col.find('h1', class_='titulo-modulo')
@@ -369,25 +384,22 @@ def limpiar_y_avanzadas(match_id, local, visitante, jornada):
     return ruta_pbp_clean, ruta_box_clean
 
 # ==============================================================================
-# RENDERIZADO HTML (MÓDULO 12)
+# 6. RENDERIZADO HTML (QUINTETOS Y BOXSCORE)
 # ==============================================================================
 def generar_html_quintetos(ruta_pbp_clean, ruta_box_clean, match_id, equipo_local, equipo_visit, fecha_partido):
     df_pbp = pd.read_csv(ruta_pbp_clean)
     df_box = pd.read_csv(ruta_box_clean)
     
     lista_maestro = []
-    if os.path.exists(os.path.join(DATA_DIR, "maestro_jugadores_primerafeb.csv")):
-        try:
-            df_maestro = pd.read_csv(os.path.join(DATA_DIR, "maestro_jugadores_primerafeb.csv"))
-            for _, r in df_maestro.iterrows(): lista_maestro.append({'name': str(r['Player']).strip().upper(), 'pos': str(r['Position']).strip()})
-        except: pass
-
-    # CARGA SEGURA DE ROLES EN TIEMPO REAL PARA EL HTML
-    map_role_id, map_role_name = cargar_roles_m12()
+    try:
+        df_maestro = pd.read_csv(os.path.join(DATA_DIR, "maestro_jugadores_primerafeb.csv"))
+        for _, r in df_maestro.iterrows(): lista_maestro.append({'name': str(r['Player']).strip().upper(), 'pos': str(r['Position']).strip()})
+    except: pass
 
     dict_roles = {}
     for _, r in df_box.iterrows():
-        pid = safe_id(str(r.get('Player_ID', '')))
+        pid = str(r.get('Player_ID', ''))
+        if pid.endswith('.0'): pid = pid[:-2]
         pname_clean = remove_accents(str(r.get('Player', '')).strip().lower())
         dict_roles[pname_clean] = map_role_id.get(pid, map_role_name.get(pname_clean, "N/A"))
 
@@ -412,12 +424,10 @@ def generar_html_quintetos(ruta_pbp_clean, ruta_box_clean, match_id, equipo_loca
             return "Alero"
         except: return "Alero"
 
-    diccionario_escudos = {}
-    if os.path.exists(FILE_LOGOS):
-        try:
-            with open(FILE_LOGOS, "r", encoding="utf-8") as f: diccionario_escudos = json.load(f)
-        except: pass
-        
+    try:
+        with open(os.path.join(DATA_DIR, "logos_equipos.json"), "r", encoding="utf-8") as f: diccionario_escudos = json.load(f)
+    except: diccionario_escudos = {}
+    
     def get_escudo(eq_name):
         for k, v in diccionario_escudos.items():
             if limpiar_texto_archivo(k).upper() == limpiar_texto_archivo(eq_name).upper(): return v
@@ -543,6 +553,7 @@ def generar_html_quintetos(ruta_pbp_clean, ruta_box_clean, match_id, equipo_loca
         return filas
 
     logo_empresa_b64, logo_feb_b64, logo_liga_b64 = get_image_base64(LOGO_EMPRESA), get_image_base64(LOGO_FEB), get_image_base64(LOGO_LIGA)
+    
     html = f"""
     <!DOCTYPE html><html><head><meta charset="utf-8"><title>Lineups - {equipo_local} vs {equipo_visit}</title>
     <style>
@@ -578,7 +589,8 @@ def generar_html_quintetos(ruta_pbp_clean, ruta_box_clean, match_id, equipo_loca
         <h2 class="team-section-title">{equipo_visit}</h2><div class="table-container"><table><thead><tr><th class="lineups-col">LINEUPS</th><th>MIN</th><th>+/-</th><th>PTS</th><th>PA</th><th>DREB</th><th>OREB</th><th>OPP OREB</th><th>AST</th><th>TO</th><th>ORTG</th><th>DRTG</th><th>eFG%</th><th>TS%</th><th>ORB%</th><th>DRB%</th><th>AST/TO</th><th>PACE</th></tr></thead><tbody>{gen_filas(lineups_visitante)}</tbody></table></div>
         <div class="legend-grid"><div class="legend-item"><b>MIN:</b> Minutes played together.<br><b>+/-:</b> Plus/Minus point differential.<br><b>PTS / PA:</b> Points Scored / Allowed.<br><b>DREB / OREB:</b> Defensive / Offensive Rebounds.<br><b>OPP_OREB:</b> Opponent Offensive Rebounds.</div><div class="legend-item"><b>AST:</b> Assists.<br><b>TO:</b> Turnovers.<br><b>AST/TO:</b> Assist to Turnover Ratio.<br><b>ORTG:</b> Offensive Rating.<br><b>DRTG:</b> Defensive Rating.</div><div class="legend-item"><b>eFG%:</b> Effective Field Goal %.<br><b>TS%:</b> True Shooting %.<br><b>ORB%:</b> Offensive Rebound %.<br><b>DRB%:</b> Defensive Rebound %.<br><b>PACE:</b> Possessions per 40 min.</div></div>
         <div class="footer">© 2026 Analizing Basketball | <a href="https://www.analizingbasketball.com" target="_blank">www.analizingbasketball.com</a></div>
-    </body></html>"""
+    </body></html>
+    """
     
     clean_local = limpiar_texto_archivo(equipo_local); clean_visit = limpiar_texto_archivo(equipo_visit)
     ruta_final = os.path.join(REPORTS_DIR, f"Lineup_Report_{match_id}_{clean_local}_vs_{clean_visit}.html")
@@ -589,15 +601,10 @@ def generar_html_boxscore(ruta_box_clean, ruta_pbp_clean, match_id, equipo_local
     df_box = pd.read_csv(ruta_box_clean)
     df_pbp = pd.read_csv(ruta_pbp_clean)
     
-    # CARGA SEGURA DE ROLES EN TIEMPO REAL PARA EL HTML
-    map_role_id, map_role_name = cargar_roles_m12()
-
-    diccionario_escudos = {}
-    if os.path.exists(FILE_LOGOS):
-        try:
-            with open(FILE_LOGOS, "r", encoding="utf-8") as f: diccionario_escudos = json.load(f)
-        except: pass
-        
+    try:
+        with open(os.path.join(DATA_DIR, "logos_equipos.json"), "r", encoding="utf-8") as f: diccionario_escudos = json.load(f)
+    except: diccionario_escudos = {}
+    
     def get_escudo(eq_name):
         for k, v in diccionario_escudos.items():
             if limpiar_texto_archivo(k).upper() == limpiar_texto_archivo(eq_name).upper(): return v
@@ -623,7 +630,11 @@ def generar_html_boxscore(ruta_box_clean, ruta_pbp_clean, match_id, equipo_local
     remaining_box = [t for t in box_teams if t != actual_local_box]
     actual_visit_box = match_team_name(equipo_visit, remaining_box) if remaining_box else (box_teams[1] if len(box_teams)>1 else actual_local_box)
 
-    team_mapping_box = {equipo_local: actual_local_box, equipo_visit: actual_visit_box}
+    team_mapping_box = {
+        equipo_local: actual_local_box,
+        equipo_visit: actual_visit_box
+    }
+
     teams_data = {}
     particulas_apellidos = ['mc', 'mac', 'de', 'del', 'la', 'las', 'los', 'san', 'van', 'von', 'da', 'di']
 
@@ -649,6 +660,7 @@ def generar_html_boxscore(ruta_box_clean, ruta_pbp_clean, match_id, equipo_local
             t_tot['FGM2']+=fg2m; t_tot['FGA2']+=fg2a; t_tot['FGM3']+=fg3m; t_tot['FGA3']+=fg3a
             t_tot['FTM']+=ftm; t_tot['FTA']+=fta; t_tot['ORB']+=orb; t_tot['DRB']+=drb; t_tot['TRB']+=trb
             t_tot['AST']+=ast; t_tot['STL']+=stl; t_tot['TOV']+=tov; t_tot['BLK']+=blk; t_tot['PFD']+=pfd; t_tot['PF']+=pf
+            
             p_list.append({'row': row, 'min_sec': min_sec, 'pts': pts, 'pir': pir, 'pm': pm, 'fg2m': fg2m, 'fg2a': fg2a, 'fg3m': fg3m, 'fg3a': fg3a, 'ftm': ftm, 'fta': fta, 'orb': orb, 'drb': drb, 'trb': trb, 'ast': ast, 'stl': stl, 'tov': tov, 'blk': blk, 'pfd': pfd, 'pf': pf})
         teams_data[team] = {'players': p_list, 'totals': t_tot}
 
@@ -656,6 +668,7 @@ def generar_html_boxscore(ruta_box_clean, ruta_pbp_clean, match_id, equipo_local
     for team, opp_team in [(equipo_local, equipo_visit), (equipo_visit, equipo_local)]:
         t_data, opp_data = teams_data[team], teams_data[opp_team]
         t_tot, opp_tot = t_data['totals'], opp_data['totals']
+        
         tm_MIN_sec = t_tot['MIN_sec'] if t_tot['MIN_sec'] > 0 else 200 * 60 * 5 
         tm_FGA = t_tot['FGA2'] + t_tot['FGA3']; tm_FGM = t_tot['FGM2'] + t_tot['FGM3']
         opp_FGA = opp_tot['FGA2'] + opp_tot['FGA3']
@@ -672,11 +685,9 @@ def generar_html_boxscore(ruta_box_clean, ruta_pbp_clean, match_id, equipo_local
             if len(partes) > 2 and partes[1].lower() in particulas_apellidos: player = " ".join(partes[:4]) if len(partes) > 3 and partes[2].lower() in particulas_apellidos else " ".join(partes[:3])
             else: player = " ".join(partes[:2]) if len(partes) >= 2 else player_raw
 
-            pid = safe_id(safe_get(row, ['Player_ID'], ""))
-            player_clean = remove_accents(str(safe_get(row, ['Player'], 'Unknown')).strip().lower())
-            
-            # ASIGNACIÓN SEGURA DEL ROL DESDE EL ARCHIVO
-            role = map_role_id.get(pid, map_role_name.get(player_clean, "N/A"))
+            pid = str(safe_get(row, ['Player_ID'], ""))
+            if pid.endswith('.0'): pid = pid[:-2]
+            role = map_role_id.get(pid, map_role_name.get(remove_accents(player_raw.strip().lower()), "N/A"))
 
             foto = safe_get(row, ['Logo_URL'])
             if pd.isna(foto) or str(foto).strip() in ["", "nan", "None"]: foto = "https://via.placeholder.com/40/cbd5e0/ffffff?text=+"
@@ -775,6 +786,9 @@ app.add_middleware(
 
 @app.get("/generar", response_class=HTMLResponse)
 def generar_scouting(jornada: int = 22, equipo: str = "MOVISTAR ESTUDIANTES", tipo_reporte: str = "quintetos"):
+    # Nos aseguramos de tener los roles cargados en memoria antes de hacer nada
+    cargar_roles()
+    
     if not os.path.exists(os.path.join(DATA_DIR, "logos_equipos.json")):
         extraer_diccionario_logos()
     if not os.path.exists(FILE_CALENDAR):
@@ -791,6 +805,7 @@ def generar_scouting(jornada: int = 22, equipo: str = "MOVISTAR ESTUDIANTES", ti
         raise HTTPException(status_code=404, detail="No se encontraron partidos para esa combinación.")
         
     p = partidos[0]
+    
     if not p['jugado']:
         raise HTTPException(status_code=400, detail="El partido aún no se ha disputado.")
         
@@ -804,7 +819,9 @@ def generar_scouting(jornada: int = 22, equipo: str = "MOVISTAR ESTUDIANTES", ti
     else:
         ruta_final = generar_html_boxscore(ruta_box_clean, ruta_pbp_clean, p['match_id'], p['equipo_local'], p['equipo_visitante'], p['fecha'])
     
-    with open(ruta_final, "r", encoding="utf-8") as f: html_content = f.read()
+    with open(ruta_final, "r", encoding="utf-8") as f:
+        html_content = f.read()
+        
     return HTMLResponse(content=html_content, status_code=200)
 
 if __name__ == "__main__":
