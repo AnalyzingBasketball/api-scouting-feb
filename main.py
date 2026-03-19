@@ -12,7 +12,7 @@ from fastapi.responses import HTMLResponse
 from fastapi.middleware.cors import CORSMiddleware
 
 # ==============================================================================
-# 1. CONFIGURACIÓN Y RUTAS
+# 1. CONFIGURACIÓN Y RUTAS 
 # ==============================================================================
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DATA_DIR = os.path.join(BASE_DIR, "data")
@@ -31,13 +31,28 @@ BASE_URL = "https://www.feb.es"
 FILE_ROLES = os.path.join(DATA_DIR, "PLAYER_ROLES_FINAL_2526.csv")
 FILE_LINEUPS = os.path.join(DATA_DIR, "LINEUPS_PRIMERAFEB_2526.csv")
 
-# ¡AQUÍ ESTABA EL ERROR! VARIABLES GLOBALES RESTAURADAS PARA QUE NO FALLE
+# --- CARGA DE ROLES K-MEANS (MÓDULO 12 ORIGINAL) ---
 map_role_id = {}
 map_role_name = {}
+try:
+    if os.path.exists(FILE_ROLES):
+        df_roles_m12 = pd.read_csv(FILE_ROLES)
+        for _, r in df_roles_m12.iterrows():
+            pid = str(r.get('PLAYER_ID', '')).strip()
+            if pid.endswith('.0'): pid = pid[:-2]
+            role = str(r.get('ROLE_NAME', 'N/A'))
+            map_role_id[pid] = role
+            
+            pname = "".join([c for c in unicodedata.normalize('NFKD', str(r.get('PLAYER_NAME', ''))) if not unicodedata.combining(c)]).lower().strip()
+            map_role_name[pname] = role
+except Exception as e:
+    print(f"⚠️ No se pudo cargar el archivo de roles: {e}")
+
+# --- VARIABLES GLOBALES (MÓDULO 13) ---
 map_role, map_pos, map_name, map_efg, map_ts, map_tov, map_orb, map_ftr, map_usg = {}, {}, {}, {}, {}, {}, {}, {}, {}
 
 # ==============================================================================
-# FUNCIONES AUXILIARES GLOBALES
+# 2. FUNCIONES DE AYUDA GLOBALES
 # ==============================================================================
 def remove_accents(input_str):
     if pd.isna(input_str): return ""
@@ -130,7 +145,7 @@ def match_team_name(target_name, available_names):
     return best_match
 
 # ==============================================================================
-# FUNCIONES MÓDULO 12 (PARTIDOS)
+# FUNCIONES MÓDULO 12 (SCRAPING Y LIMPIEZA)
 # ==============================================================================
 def extraer_diccionario_logos():
     try:
@@ -372,19 +387,6 @@ def generar_html_quintetos(ruta_pbp_clean, ruta_box_clean, match_id, equipo_loca
         df_maestro = pd.read_csv(os.path.join(DATA_DIR, "maestro_jugadores_primerafeb.csv"))
         for _, r in df_maestro.iterrows(): lista_maestro.append({'name': str(r['Player']).strip().upper(), 'pos': str(r['Position']).strip()})
     except: pass
-
-    global map_role_id, map_role_name
-    if not map_role_id:
-        try:
-            df_roles = pd.read_csv(FILE_ROLES)
-            for _, r in df_roles.iterrows():
-                p_id = str(r.get('PLAYER_ID', '')).strip()
-                if p_id.endswith('.0'): p_id = p_id[:-2]
-                role_name = str(r.get('ROLE_NAME', 'N/A'))
-                map_role_id[p_id] = role_name
-                map_role_name[remove_accents(str(r.get('PLAYER_NAME', '')).lower().strip())] = role_name
-        except:
-            pass
 
     dict_roles = {}
     for _, r in df_box.iterrows():
@@ -657,20 +659,9 @@ def generar_html_boxscore(ruta_box_clean, ruta_pbp_clean, match_id, equipo_local
             if len(partes) > 2 and partes[1].lower() in particulas_apellidos: player = " ".join(partes[:4]) if len(partes) > 3 and partes[2].lower() in particulas_apellidos else " ".join(partes[:3])
             else: player = " ".join(partes[:2]) if len(partes) >= 2 else player_raw
 
-            global map_role_id, map_role_name
-            if not map_role_id:
-                try:
-                    df_roles = pd.read_csv(FILE_ROLES)
-                    for _, r in df_roles.iterrows():
-                        p_id = str(r.get('PLAYER_ID', '')).strip()
-                        if p_id.endswith('.0'): p_id = p_id[:-2]
-                        role_name = str(r.get('ROLE_NAME', 'N/A'))
-                        map_role_id[p_id] = role_name
-                        map_role_name[remove_accents(str(r.get('PLAYER_NAME', '')).lower().strip())] = role_name
-                except: pass
-
             pid = str(safe_get(row, ['Player_ID'], ""))
             if pid.endswith('.0'): pid = pid[:-2]
+            
             role = map_role_id.get(pid, map_role_name.get(remove_accents(player_raw.strip().lower()), "N/A"))
 
             foto = safe_get(row, ['Logo_URL'])
@@ -954,17 +945,9 @@ def generar_scouting(jornada: int = 22, equipo: str = "MOVISTAR ESTUDIANTES", ti
     p = partidos[0]
     if not p['jugado']: raise HTTPException(status_code=400, detail="El partido aún no se ha disputado.")
         
-    jornada_str = f"Jornada-{jornada}"
-    local_str = limpiar_texto_archivo(p['equipo_local'])
-    visit_str = limpiar_texto_archivo(p['equipo_visitante'])
+    if not extraer_partido_api(p['match_id']): raise HTTPException(status_code=500, detail="Error al descargar datos en vivo.")
     
-    ruta_pbp_clean = os.path.join(DATA_DIR, f"pbp_{p['match_id']}_{jornada_str}_{local_str}_vs_{visit_str}_clean.csv")
-    ruta_box_clean = os.path.join(DATA_DIR, f"boxscore_{p['match_id']}_{jornada_str}_{local_str}_vs_{visit_str}_clean.csv")
-    
-    if os.path.exists(ruta_pbp_clean) and os.path.exists(ruta_box_clean): pass
-    else:
-        if not extraer_partido_api(p['match_id']): raise HTTPException(status_code=500, detail="Error al descargar datos.")
-        ruta_pbp_clean, ruta_box_clean = limpiar_y_avanzadas(p['match_id'], p['equipo_local'], p['equipo_visitante'], jornada)
+    ruta_pbp_clean, ruta_box_clean = limpiar_y_avanzadas(p['match_id'], p['equipo_local'], p['equipo_visitante'], jornada)
     
     if tipo_reporte.lower() == "quintetos":
         ruta_final = generar_html_quintetos(ruta_pbp_clean, ruta_box_clean, p['match_id'], p['equipo_local'], p['equipo_visitante'], p['fecha'])
