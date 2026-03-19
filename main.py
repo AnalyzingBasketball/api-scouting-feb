@@ -1096,7 +1096,7 @@ def generar_contextual(eq: str = "MOVISTAR ESTUDIANTES", venue: str = "ALL", n_g
             </div>
             <div class="team-section"><div class="team-title-block"><img src="{logo_url}" class="team-shield"><h2>{eq}</h2></div><div class="table-title title-top">Most Efficient Lineups</div>{render_table(top3)}"""
         if not bottom3.empty: html_content += f"""<div class="table-title title-bot">Least Efficient Lineups</div>{render_table(bottom3)}"""
-        html_content += "</div><div class="footer">© 2026 Analizing Basketball | <a href="https://www.analizingbasketball.com" target="_blank">www.analizingbasketball.com</a></div></body></html>"
+        html_content += '</div><div class="footer">© 2026 Analizing Basketball | <a href="https://www.analizingbasketball.com" target="_blank">www.analizingbasketball.com</a></div></body></html>'
         return HTMLResponse(content=html_content, status_code=200)
 
     else:
