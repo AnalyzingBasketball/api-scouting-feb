@@ -16,8 +16,8 @@ import uvicorn
 # 1. CONFIGURACIÓN Y RUTAS 
 # ==============================================================================
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-# AQUÍ ESTABA EL ERROR: RESTAURADO A TU RUTA ORIGINAL dataTFM
-DATA_DIR = os.path.join(BASE_DIR, "dataTFM")
+# CORREGIDO: Apunta exactamente a tu carpeta "data" en GitHub
+DATA_DIR = os.path.join(BASE_DIR, "data")
 REPORTS_DIR = os.path.join(DATA_DIR, "reports")
 
 LOGO_EMPRESA = os.path.join(BASE_DIR, "images/logo.png")
@@ -392,9 +392,13 @@ def generar_html_quintetos(ruta_pbp_clean, ruta_box_clean, match_id, equipo_loca
     
     lista_maestro = []
     try:
-        df_maestro = pd.read_csv(os.path.join(DATA_DIR, "maestro_jugadores_primerafeb.csv"))
-        for _, r in df_maestro.iterrows(): lista_maestro.append({'name': str(r['Player']).strip().upper(), 'pos': str(r['Position']).strip()})
+        if os.path.exists(os.path.join(DATA_DIR, "maestro_jugadores_primerafeb.csv")):
+            df_maestro = pd.read_csv(os.path.join(DATA_DIR, "maestro_jugadores_primerafeb.csv"))
+            for _, r in df_maestro.iterrows(): lista_maestro.append({'name': str(r['Player']).strip().upper(), 'pos': str(r['Position']).strip()})
     except: pass
+
+    # Nos aseguramos de tener los roles actualizados antes de cruzar
+    cargar_roles()
 
     dict_roles = {}
     for _, r in df_box.iterrows():
@@ -553,7 +557,6 @@ def generar_html_quintetos(ruta_pbp_clean, ruta_box_clean, match_id, equipo_loca
         return filas
 
     logo_empresa_b64, logo_feb_b64, logo_liga_b64 = get_image_base64(LOGO_EMPRESA), get_image_base64(LOGO_FEB), get_image_base64(LOGO_LIGA)
-    
     html = f"""
     <!DOCTYPE html><html><head><meta charset="utf-8"><title>Lineups - {equipo_local} vs {equipo_visit}</title>
     <style>
@@ -591,7 +594,6 @@ def generar_html_quintetos(ruta_pbp_clean, ruta_box_clean, match_id, equipo_loca
         <div class="footer">© 2026 Analizing Basketball | <a href="https://www.analizingbasketball.com" target="_blank">www.analizingbasketball.com</a></div>
     </body></html>
     """
-    
     clean_local = limpiar_texto_archivo(equipo_local); clean_visit = limpiar_texto_archivo(equipo_visit)
     ruta_final = os.path.join(REPORTS_DIR, f"Lineup_Report_{match_id}_{clean_local}_vs_{clean_visit}.html")
     with open(ruta_final, "w", encoding="utf-8") as f: f.write(html)
@@ -600,6 +602,9 @@ def generar_html_quintetos(ruta_pbp_clean, ruta_box_clean, match_id, equipo_loca
 def generar_html_boxscore(ruta_box_clean, ruta_pbp_clean, match_id, equipo_local, equipo_visit, fecha_partido):
     df_box = pd.read_csv(ruta_box_clean)
     df_pbp = pd.read_csv(ruta_pbp_clean)
+    
+    # Nos aseguramos de tener los roles actualizados antes de cruzar
+    cargar_roles()
     
     try:
         with open(os.path.join(DATA_DIR, "logos_equipos.json"), "r", encoding="utf-8") as f: diccionario_escudos = json.load(f)
@@ -687,6 +692,7 @@ def generar_html_boxscore(ruta_box_clean, ruta_pbp_clean, match_id, equipo_local
 
             pid = str(safe_get(row, ['Player_ID'], ""))
             if pid.endswith('.0'): pid = pid[:-2]
+            
             role = map_role_id.get(pid, map_role_name.get(remove_accents(player_raw.strip().lower()), "N/A"))
 
             foto = safe_get(row, ['Logo_URL'])
@@ -786,12 +792,9 @@ app.add_middleware(
 
 @app.get("/generar", response_class=HTMLResponse)
 def generar_scouting(jornada: int = 22, equipo: str = "MOVISTAR ESTUDIANTES", tipo_reporte: str = "quintetos"):
-    # Nos aseguramos de tener los roles cargados en memoria antes de hacer nada
-    cargar_roles()
-    
     if not os.path.exists(os.path.join(DATA_DIR, "logos_equipos.json")):
         extraer_diccionario_logos()
-    if not os.path.exists(FILE_CALENDAR):
+    if not os.path.exists(os.path.join(DATA_DIR, "calendario_maestro_primerafeb_2025.csv")):
         construir_calendario_maestro()
     if not os.path.exists(os.path.join(DATA_DIR, "maestro_jugadores_primerafeb.csv")):
         extraer_maestro_jugadores()
@@ -802,7 +805,7 @@ def generar_scouting(jornada: int = 22, equipo: str = "MOVISTAR ESTUDIANTES", ti
         partidos = [p for p in partidos if equipo_seleccionado == p['equipo_local'].upper() or equipo_seleccionado == p['equipo_visitante'].upper()]
         
     if not partidos:
-        raise HTTPException(status_code=404, detail="No se encontraron partidos para esa combinación.")
+        raise HTTPException(status_code=404, detail="No se encontraron partidos para esa combinación de jornada y equipo.")
         
     p = partidos[0]
     
