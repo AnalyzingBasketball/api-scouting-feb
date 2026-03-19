@@ -3,7 +3,7 @@ name: Robot de Actualizacion FEB
 on:
   schedule:
     # Se ejecuta automáticamente todos los martes a las 04:00 AM (Hora UTC)
-    - cron: '0 4 * * 2'
+  - cron: '0 4 * * 1,4'
   workflow_dispatch:
     # Esto nos permite ejecutar el robot manualmente con un botón cuando queramos
 
