@@ -11,6 +11,7 @@ import time
 from bs4 import BeautifulSoup
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import HTMLResponse
+from fastapi.middleware.cors import CORSMiddleware
 
 # ==============================================================================
 # 1. CONFIGURACIÓN Y RUTAS (Adaptadas dinámicamente para la nube)
@@ -53,7 +54,7 @@ EQUIPOS_DISPLAY = [
 ]
 
 # ==============================================================================
-# 2. FUNCIONES DE AYUDA (INTACTAS)
+# 2. FUNCIONES DE AYUDA
 # ==============================================================================
 def remove_accents(input_str):
     if pd.isna(input_str): return ""
@@ -131,7 +132,7 @@ def match_team_name(target_name, available_names):
     return best_match
 
 # ==============================================================================
-# 3. RUTINAS MAESTRAS (INTACTAS)
+# 3. RUTINAS MAESTRAS
 # ==============================================================================
 def extraer_diccionario_logos():
     try:
@@ -233,7 +234,7 @@ def extraer_maestro_jugadores():
     if lista: pd.DataFrame(lista).drop_duplicates(subset=['Player', 'Team']).to_csv(os.path.join(DATA_DIR, "maestro_jugadores_primerafeb.csv"), index=False, encoding='utf-8-sig')
 
 # ==============================================================================
-# 4. SCRAPING Y EXTRACCIÓN PARTIDOS (INTACTAS)
+# 4. SCRAPING Y EXTRACCIÓN PARTIDOS
 # ==============================================================================
 def obtener_partidos_jornada(jornada_id):
     url_calendario = f"https://www.feb.es/competiciones/calendario/primerafeb/1/2025" 
@@ -293,7 +294,7 @@ def extraer_partido_api(match_id):
     except: return False
 
 # ==============================================================================
-# 5. LIMPIEZA (INTACTAS)
+# 5. LIMPIEZA
 # ==============================================================================
 def limpiar_y_avanzadas(match_id, local, visitante, jornada):
     jornada_str = f"Jornada-{jornada}"; local_str = limpiar_texto_archivo(local); visit_str = limpiar_texto_archivo(visitante)
@@ -373,7 +374,7 @@ def limpiar_y_avanzadas(match_id, local, visitante, jornada):
     return ruta_pbp_clean, ruta_box_clean
 
 # ==============================================================================
-# 6. RENDERIZADO HTML (INTACTAS)
+# 6. RENDERIZADO HTML
 # ==============================================================================
 def generar_html_quintetos(ruta_pbp_clean, ruta_box_clean, match_id, equipo_local, equipo_visit):
     df_pbp = pd.read_csv(ruta_pbp_clean)
@@ -749,6 +750,14 @@ def generar_html_boxscore(ruta_box_clean, ruta_pbp_clean, match_id, equipo_local
 # 7. INTERFAZ API REST (Sustituye a ipywidgets)
 # ==============================================================================
 app = FastAPI()
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 @app.get("/generar", response_class=HTMLResponse)
 def generar_scouting(jornada: int = 22, equipo: str = "MOVISTAR ESTUDIANTES", tipo_reporte: str = "quintetos"):
