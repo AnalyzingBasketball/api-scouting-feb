@@ -31,6 +31,11 @@ BASE_URL = "https://www.feb.es"
 FILE_ROLES = os.path.join(DATA_DIR, "PLAYER_ROLES_FINAL_2526.csv")
 FILE_LINEUPS = os.path.join(DATA_DIR, "LINEUPS_PRIMERAFEB_2526.csv")
 
+# ¡AQUÍ ESTABA EL ERROR! VARIABLES GLOBALES RESTAURADAS PARA QUE NO FALLE
+map_role_id = {}
+map_role_name = {}
+map_role, map_pos, map_name, map_efg, map_ts, map_tov, map_orb, map_ftr, map_usg = {}, {}, {}, {}, {}, {}, {}, {}, {}
+
 # ==============================================================================
 # FUNCIONES AUXILIARES GLOBALES
 # ==============================================================================
@@ -368,16 +373,18 @@ def generar_html_quintetos(ruta_pbp_clean, ruta_box_clean, match_id, equipo_loca
         for _, r in df_maestro.iterrows(): lista_maestro.append({'name': str(r['Player']).strip().upper(), 'pos': str(r['Position']).strip()})
     except: pass
 
-    map_role_id, map_role_name = {}, {}
-    try:
-        df_roles = pd.read_csv(FILE_ROLES)
-        for _, r in df_roles.iterrows():
-            p_id = str(r.get('PLAYER_ID', '')).strip()
-            if p_id.endswith('.0'): p_id = p_id[:-2]
-            role_name = str(r.get('ROLE_NAME', 'N/A'))
-            map_role_id[p_id] = role_name
-            map_role_name[remove_accents(str(r.get('PLAYER_NAME', '')).lower().strip())] = role_name
-    except: pass
+    global map_role_id, map_role_name
+    if not map_role_id:
+        try:
+            df_roles = pd.read_csv(FILE_ROLES)
+            for _, r in df_roles.iterrows():
+                p_id = str(r.get('PLAYER_ID', '')).strip()
+                if p_id.endswith('.0'): p_id = p_id[:-2]
+                role_name = str(r.get('ROLE_NAME', 'N/A'))
+                map_role_id[p_id] = role_name
+                map_role_name[remove_accents(str(r.get('PLAYER_NAME', '')).lower().strip())] = role_name
+        except:
+            pass
 
     dict_roles = {}
     for _, r in df_box.iterrows():
@@ -529,7 +536,8 @@ def generar_html_quintetos(ruta_pbp_clean, ruta_box_clean, match_id, equipo_loca
         return filas
 
     logo_empresa_b64, logo_feb_b64, logo_liga_b64 = get_image_base64(LOGO_EMPRESA), get_image_base64(LOGO_FEB), get_image_base64(LOGO_LIGA)
-    html = f"""<!DOCTYPE html><html><head><meta charset="utf-8"><title>Lineups - {equipo_local} vs {equipo_visit}</title>
+    html = f"""
+    <!DOCTYPE html><html><head><meta charset="utf-8"><title>Lineups - {equipo_local} vs {equipo_visit}</title>
     <style>
         body {{ font-family: 'Segoe UI', sans-serif; background: #f4f6f9; color: #333; margin: 0; padding: 20px; padding-bottom: 80px; }}
         .header-container {{ background: #fff; padding: 20px 30px; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); margin-bottom: 20px; }}
@@ -649,16 +657,17 @@ def generar_html_boxscore(ruta_box_clean, ruta_pbp_clean, match_id, equipo_local
             if len(partes) > 2 and partes[1].lower() in particulas_apellidos: player = " ".join(partes[:4]) if len(partes) > 3 and partes[2].lower() in particulas_apellidos else " ".join(partes[:3])
             else: player = " ".join(partes[:2]) if len(partes) >= 2 else player_raw
 
-            map_role_id, map_role_name = {}, {}
-            try:
-                df_roles = pd.read_csv(FILE_ROLES)
-                for _, r in df_roles.iterrows():
-                    p_id = str(r.get('PLAYER_ID', '')).strip()
-                    if p_id.endswith('.0'): p_id = p_id[:-2]
-                    role_name = str(r.get('ROLE_NAME', 'N/A'))
-                    map_role_id[p_id] = role_name
-                    map_role_name[remove_accents(str(r.get('PLAYER_NAME', '')).lower().strip())] = role_name
-            except: pass
+            global map_role_id, map_role_name
+            if not map_role_id:
+                try:
+                    df_roles = pd.read_csv(FILE_ROLES)
+                    for _, r in df_roles.iterrows():
+                        p_id = str(r.get('PLAYER_ID', '')).strip()
+                        if p_id.endswith('.0'): p_id = p_id[:-2]
+                        role_name = str(r.get('ROLE_NAME', 'N/A'))
+                        map_role_id[p_id] = role_name
+                        map_role_name[remove_accents(str(r.get('PLAYER_NAME', '')).lower().strip())] = role_name
+                except: pass
 
             pid = str(safe_get(row, ['Player_ID'], ""))
             if pid.endswith('.0'): pid = pid[:-2]
@@ -749,8 +758,6 @@ def generar_html_boxscore(ruta_box_clean, ruta_pbp_clean, match_id, equipo_local
 # ==============================================================================
 # FUNCIONES MÓDULO 13 (SPLITS TÁCTICOS)
 # ==============================================================================
-map_role, map_pos, map_name, map_efg, map_ts, map_tov, map_orb, map_ftr, map_usg = {}, {}, {}, {}, {}, {}, {}, {}, {}
-
 def load_role_mappings():
     global map_role, map_pos, map_name, map_efg, map_ts, map_tov, map_orb, map_ftr, map_usg
     if map_role: return
