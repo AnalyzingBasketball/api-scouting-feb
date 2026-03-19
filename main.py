@@ -31,23 +31,9 @@ BASE_URL = "https://www.feb.es"
 FILE_ROLES = os.path.join(DATA_DIR, "PLAYER_ROLES_FINAL_2526.csv")
 FILE_LINEUPS = os.path.join(DATA_DIR, "LINEUPS_PRIMERAFEB_2526.csv")
 
-# --- CARGA DE ROLES K-MEANS (MÓDULO 12 ORIGINAL) ---
+# Variables globales vacías, se llenarán dinámicamente cuando se pida un informe
 map_role_id = {}
 map_role_name = {}
-try:
-    if os.path.exists(FILE_ROLES):
-        df_roles = pd.read_csv(FILE_ROLES)
-        for _, r in df_roles.iterrows():
-            pid = str(r.get('PLAYER_ID', '')).strip()
-            if pid.endswith('.0'): pid = pid[:-2]
-            role = str(r.get('ROLE_NAME', 'N/A'))
-            map_role_id[pid] = role
-            
-            pname = remove_accents(str(r.get('PLAYER_NAME', '')).lower().strip())
-            map_role_name[pname] = role
-except: pass
-
-# --- VARIABLES GLOBALES (MÓDULO 13) ---
 map_role, map_pos, map_name, map_efg, map_ts, map_tov, map_orb, map_ftr, map_usg = {}, {}, {}, {}, {}, {}, {}, {}, {}
 
 # ==============================================================================
@@ -391,6 +377,19 @@ def generar_html_quintetos(ruta_pbp_clean, ruta_box_clean, match_id, equipo_loca
         for _, r in df_maestro.iterrows(): lista_maestro.append({'name': str(r['Player']).strip().upper(), 'pos': str(r['Position']).strip()})
     except: pass
 
+    # --- LECTURA SEGURA DE ROLES PARA QUINTETOS ---
+    global map_role_id, map_role_name
+    if not map_role_id:
+        try:
+            df_roles = pd.read_csv(FILE_ROLES)
+            for _, r in df_roles.iterrows():
+                p_id = str(r.get('PLAYER_ID', '')).strip()
+                if p_id.endswith('.0'): p_id = p_id[:-2]
+                role_name = str(r.get('ROLE_NAME', 'N/A'))
+                map_role_id[p_id] = role_name
+                map_role_name[remove_accents(str(r.get('PLAYER_NAME', '')).lower().strip())] = role_name
+        except: pass
+
     dict_roles = {}
     for _, r in df_box.iterrows():
         pid = str(r.get('Player_ID', ''))
@@ -592,6 +591,19 @@ def generar_html_boxscore(ruta_box_clean, ruta_pbp_clean, match_id, equipo_local
     df_box = pd.read_csv(ruta_box_clean)
     df_pbp = pd.read_csv(ruta_pbp_clean)
     
+    # --- LECTURA SEGURA DE ROLES PARA BOXSCORE ---
+    global map_role_id, map_role_name
+    if not map_role_id:
+        try:
+            df_roles = pd.read_csv(FILE_ROLES)
+            for _, r in df_roles.iterrows():
+                p_id = str(r.get('PLAYER_ID', '')).strip()
+                if p_id.endswith('.0'): p_id = p_id[:-2]
+                role_name = str(r.get('ROLE_NAME', 'N/A'))
+                map_role_id[p_id] = role_name
+                map_role_name[remove_accents(str(r.get('PLAYER_NAME', '')).lower().strip())] = role_name
+        except: pass
+
     try:
         with open(os.path.join(DATA_DIR, "logos_equipos.json"), "r", encoding="utf-8") as f: diccionario_escudos = json.load(f)
     except: diccionario_escudos = {}
@@ -615,6 +627,7 @@ def generar_html_boxscore(ruta_box_clean, ruta_pbp_clean, match_id, equipo_local
             prev_h, prev_a = sh, sa
             
     score_home_final, score_away_final = int(df_pbp['Score_Home'].iloc[-1]), int(df_pbp['Score_Away'].iloc[-1])
+
     box_teams = df_box['Team'].dropna().unique().tolist()
     actual_local_box = match_team_name(equipo_local, box_teams)
     remaining_box = [t for t in box_teams if t != actual_local_box]
@@ -672,9 +685,7 @@ def generar_html_boxscore(ruta_box_clean, ruta_pbp_clean, match_id, equipo_local
             pid = str(safe_get(row, ['Player_ID'], ""))
             if pid.endswith('.0'): pid = pid[:-2]
             
-            role = map_role_id.get(pid)
-            if not role:
-                role = map_role_name.get(remove_accents(player_raw.strip().lower()), "N/A")
+            role = map_role_id.get(pid, map_role_name.get(remove_accents(player_raw.strip().lower()), "N/A"))
 
             foto = safe_get(row, ['Logo_URL'])
             if pd.isna(foto) or str(foto).strip() in ["", "nan", "None"]: foto = "https://via.placeholder.com/40/cbd5e0/ffffff?text=+"
