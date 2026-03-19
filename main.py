@@ -394,6 +394,7 @@ def generar_html_quintetos(ruta_pbp_clean, ruta_box_clean, match_id, equipo_loca
         for _, r in df_maestro.iterrows(): lista_maestro.append({'name': str(r['Player']).strip().upper(), 'pos': str(r['Position']).strip()})
     except: pass
 
+    # --- ARREGLO DE CARGA DE ROLES (N/A) ---
     global map_role_id, map_role_name
     if not map_role_id:
         try:
@@ -413,6 +414,7 @@ def generar_html_quintetos(ruta_pbp_clean, ruta_box_clean, match_id, equipo_loca
         if pid.endswith('.0'): pid = pid[:-2]
         pname_clean = remove_accents(str(r.get('Player', '')).strip().lower())
         dict_roles[pname_clean] = map_role_id.get(pid, map_role_name.get(pname_clean, "N/A"))
+    # ---------------------------------------
 
     def obtener_posicion_segura(box_name):
         if not lista_maestro: return "Alero"
@@ -697,10 +699,7 @@ def generar_html_boxscore(ruta_box_clean, ruta_pbp_clean, match_id, equipo_local
             if len(partes) > 2 and partes[1].lower() in particulas_apellidos: player = " ".join(partes[:4]) if len(partes) > 3 and partes[2].lower() in particulas_apellidos else " ".join(partes[:3])
             else: player = " ".join(partes[:2]) if len(partes) >= 2 else player_raw
 
-            pid = str(safe_get(row, ['Player_ID'], ""))
-            if pid.endswith('.0'): pid = pid[:-2]
-            
-            # --- LECTURA DE ROL (Prioridad ID, luego Nombre) ---
+            # --- ARREGLO DE CARGA DE ROLES (N/A) ---
             global map_role_id, map_role_name
             if not map_role_id:
                 try:
@@ -710,10 +709,13 @@ def generar_html_boxscore(ruta_box_clean, ruta_pbp_clean, match_id, equipo_local
                         if p_id.endswith('.0'): p_id = p_id[:-2]
                         role_name = str(r.get('ROLE_NAME', 'N/A'))
                         map_role_id[p_id] = role_name
-                        pname_clean = remove_accents(str(r.get('PLAYER_NAME', '')).lower().strip())
-                        map_role_name[pname_clean] = role_name
+                        map_role_name[remove_accents(str(r.get('PLAYER_NAME', '')).lower().strip())] = role_name
                 except:
                     pass
+            # ---------------------------------------
+
+            pid = str(safe_get(row, ['Player_ID'], ""))
+            if pid.endswith('.0'): pid = pid[:-2]
             
             role = map_role_id.get(pid)
             if not role:
@@ -843,10 +845,23 @@ def generar_scouting(jornada: int = 22, equipo: str = "MOVISTAR ESTUDIANTES", ti
     if not p['jugado']:
         raise HTTPException(status_code=400, detail="El partido aún no se ha disputado.")
         
-    if not extraer_partido_api(p['match_id']):
-        raise HTTPException(status_code=500, detail="Error al descargar datos de la API de la FEB.")
-        
-    ruta_pbp_clean, ruta_box_clean = limpiar_y_avanzadas(p['match_id'], p['equipo_local'], p['equipo_visitante'], jornada)
+    # --- NUEVA LÓGICA DE VELOCIDAD (Uso de datos del Robot) ---
+    jornada_str = f"Jornada-{jornada}"
+    local_str = limpiar_texto_archivo(p['equipo_local'])
+    visit_str = limpiar_texto_archivo(p['equipo_visitante'])
+    
+    ruta_pbp_clean = os.path.join(DATA_DIR, f"pbp_{p['match_id']}_{jornada_str}_{local_str}_vs_{visit_str}_clean.csv")
+    ruta_box_clean = os.path.join(DATA_DIR, f"boxscore_{p['match_id']}_{jornada_str}_{local_str}_vs_{visit_str}_clean.csv")
+    
+    if os.path.exists(ruta_pbp_clean) and os.path.exists(ruta_box_clean):
+        # Todo pre-calculado, pasamos directo a generar el HTML
+        pass
+    else:
+        # Si el partido se acaba de jugar y el robot aún no ha pasado, lo calculamos al vuelo
+        if not extraer_partido_api(p['match_id']):
+            raise HTTPException(status_code=500, detail="Error al descargar datos de la API de la FEB.")
+        ruta_pbp_clean, ruta_box_clean = limpiar_y_avanzadas(p['match_id'], p['equipo_local'], p['equipo_visitante'], jornada)
+    # ----------------------------------------------------------
     
     if tipo_reporte.lower() == "quintetos":
         ruta_final = generar_html_quintetos(ruta_pbp_clean, ruta_box_clean, p['match_id'], p['equipo_local'], p['equipo_visitante'], p['fecha'])
