@@ -16,7 +16,6 @@ import uvicorn
 # 1. CONFIGURACIÓN Y RUTAS 
 # ==============================================================================
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-# CORREGIDO: Apunta exactamente a tu carpeta "data" en GitHub
 DATA_DIR = os.path.join(BASE_DIR, "data")
 REPORTS_DIR = os.path.join(DATA_DIR, "reports")
 
@@ -32,12 +31,10 @@ BASE_URL = "https://www.feb.es"
 
 FILE_ROLES = os.path.join(DATA_DIR, "PLAYER_ROLES_FINAL_2526.csv")
 
-# Variables globales para los roles
 map_role_id = {}
 map_role_name = {}
 
 def cargar_roles():
-    """Carga los roles en el momento exacto de la petición para asegurar que existen"""
     global map_role_id, map_role_name
     map_role_id.clear()
     map_role_name.clear()
@@ -53,7 +50,7 @@ def cargar_roles():
                 pname = remove_accents(str(r.get('PLAYER_NAME', '')).lower().strip())
                 map_role_name[pname] = role
     except Exception as e:
-        print(f"⚠️ No se pudo cargar el archivo de roles: {e}")
+        pass
 
 # ==============================================================================
 # 2. FUNCIONES DE AYUDA GLOBALES
@@ -251,7 +248,6 @@ def obtener_partidos_jornada(jornada_id):
     url_calendario = f"https://www.feb.es/competiciones/calendario/primerafeb/1/2025" 
     res = requests.get(url_calendario, headers=HEADERS_WEB)
     soup = BeautifulSoup(res.text, 'html.parser')
-    
     datos_partidos = []
     for col in soup.find_all('div', class_='columna'):
         h1 = col.find('h1', class_='titulo-modulo')
@@ -396,9 +392,6 @@ def generar_html_quintetos(ruta_pbp_clean, ruta_box_clean, match_id, equipo_loca
             df_maestro = pd.read_csv(os.path.join(DATA_DIR, "maestro_jugadores_primerafeb.csv"))
             for _, r in df_maestro.iterrows(): lista_maestro.append({'name': str(r['Player']).strip().upper(), 'pos': str(r['Position']).strip()})
     except: pass
-
-    # Nos aseguramos de tener los roles actualizados antes de cruzar
-    cargar_roles()
 
     dict_roles = {}
     for _, r in df_box.iterrows():
@@ -594,7 +587,9 @@ def generar_html_quintetos(ruta_pbp_clean, ruta_box_clean, match_id, equipo_loca
         <div class="footer">© 2026 Analizing Basketball | <a href="https://www.analizingbasketball.com" target="_blank">www.analizingbasketball.com</a></div>
     </body></html>
     """
-    clean_local = limpiar_texto_archivo(equipo_local); clean_visit = limpiar_texto_archivo(equipo_visit)
+    
+    clean_local = limpiar_texto_archivo(equipo_local)
+    clean_visit = limpiar_texto_archivo(equipo_visit)
     ruta_final = os.path.join(REPORTS_DIR, f"Lineup_Report_{match_id}_{clean_local}_vs_{clean_visit}.html")
     with open(ruta_final, "w", encoding="utf-8") as f: f.write(html)
     return ruta_final
@@ -602,9 +597,6 @@ def generar_html_quintetos(ruta_pbp_clean, ruta_box_clean, match_id, equipo_loca
 def generar_html_boxscore(ruta_box_clean, ruta_pbp_clean, match_id, equipo_local, equipo_visit, fecha_partido):
     df_box = pd.read_csv(ruta_box_clean)
     df_pbp = pd.read_csv(ruta_pbp_clean)
-    
-    # Nos aseguramos de tener los roles actualizados antes de cruzar
-    cargar_roles()
     
     try:
         with open(os.path.join(DATA_DIR, "logos_equipos.json"), "r", encoding="utf-8") as f: diccionario_escudos = json.load(f)
@@ -773,6 +765,9 @@ def generar_html_boxscore(ruta_box_clean, ruta_pbp_clean, match_id, equipo_local
         <div class="footer">© 2026 Analizing Basketball | <a href="https://www.analizingbasketball.com" target="_blank">www.analizingbasketball.com</a></div>
     </body></html>
     """
+    
+    clean_local = limpiar_texto_archivo(equipo_local)
+    clean_visit = limpiar_texto_archivo(equipo_visit)
     ruta_final = os.path.join(REPORTS_DIR, f"Boxscore_{match_id}_{clean_local}_vs_{clean_visit}.html")
     with open(ruta_final, "w", encoding="utf-8") as f: f.write(html)
     return ruta_final
@@ -792,6 +787,8 @@ app.add_middleware(
 
 @app.get("/generar", response_class=HTMLResponse)
 def generar_scouting(jornada: int = 22, equipo: str = "MOVISTAR ESTUDIANTES", tipo_reporte: str = "quintetos"):
+    cargar_roles()
+    
     if not os.path.exists(os.path.join(DATA_DIR, "logos_equipos.json")):
         extraer_diccionario_logos()
     if not os.path.exists(os.path.join(DATA_DIR, "calendario_maestro_primerafeb_2025.csv")):
@@ -805,7 +802,7 @@ def generar_scouting(jornada: int = 22, equipo: str = "MOVISTAR ESTUDIANTES", ti
         partidos = [p for p in partidos if equipo_seleccionado == p['equipo_local'].upper() or equipo_seleccionado == p['equipo_visitante'].upper()]
         
     if not partidos:
-        raise HTTPException(status_code=404, detail="No se encontraron partidos para esa combinación de jornada y equipo.")
+        raise HTTPException(status_code=404, detail="No se encontraron partidos para esa combinación.")
         
     p = partidos[0]
     
