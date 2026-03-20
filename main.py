@@ -13,7 +13,7 @@ from fastapi.middleware.cors import CORSMiddleware
 import uvicorn
 
 # ==============================================================================
-# 1. CONFIGURACIÓN Y RUTAS GLOBALES
+# 1. CONFIGURACIÓN Y RUTAS GLOBALES COMPARTIDAS
 # ==============================================================================
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DATA_DIR = os.path.join(BASE_DIR, "data")
@@ -26,17 +26,17 @@ LOGO_LIGA = os.path.join(BASE_DIR, "images/primera_feb.png")
 os.makedirs(DATA_DIR, exist_ok=True)
 os.makedirs(REPORTS_DIR, exist_ok=True)
 
-HEADERS_WEB = {'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36'}
+HEADERS_WEB = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'}
 BASE_URL = "https://www.feb.es"
 
 FILE_ROLES = os.path.join(DATA_DIR, "PLAYER_ROLES_FINAL_2526.csv")
 FILE_LINEUPS = os.path.join(DATA_DIR, "LINEUPS_PRIMERAFEB_2526.csv")
-FILE_PHOTOS = os.path.join(DATA_DIR, "raw_data", "PLAYER_NAMES_DICT.json")
-FILE_LOGOS = os.path.join(DATA_DIR, "logos_equipos.json")
 FILE_CALENDAR = os.path.join(DATA_DIR, "calendario_maestro_primerafeb_2025.csv")
+FILE_LOGOS = os.path.join(DATA_DIR, "logos_equipos.json")
+FILE_PHOTOS = os.path.join(DATA_DIR, "raw_data", "PLAYER_NAMES_DICT.json")
 
 # ==============================================================================
-# 2. FUNCIONES GLOBALES DE AYUDA
+# 2. FUNCIONES DE AYUDA (PURAS, NO COMPARTEN MEMORIA)
 # ==============================================================================
 def remove_accents(input_str):
     if pd.isna(input_str): return ""
@@ -46,6 +46,9 @@ def limpiar_texto_archivo(texto):
     if not isinstance(texto, str): return "Desconocido"
     texto = unicodedata.normalize('NFKD', texto).encode('ASCII', 'ignore').decode('utf-8')
     return re.sub(r'[^a-zA-Z0-9]', '', texto)
+
+def clear_string(s):
+    return ''.join(c for c in unicodedata.normalize('NFKD', str(s)) if not unicodedata.combining(c)).upper()
 
 def safe_id(val):
     if pd.isna(val): return ""
@@ -125,12 +128,6 @@ def match_team_name(target_name, available_names):
             best_match = cand
     return best_match
 
-def clear_string(s):
-    return ''.join(c for c in unicodedata.normalize('NFKD', str(s)) if not unicodedata.combining(c)).upper()
-
-# ==============================================================================
-# EXTRACCIÓN Y API (COMPARTIDO M12, M13, M14)
-# ==============================================================================
 def extraer_diccionario_logos():
     try:
         r = requests.get("https://www.feb.es/competiciones/calendario/primerafeb/1/2025", headers=HEADERS_WEB)
@@ -173,7 +170,32 @@ def construir_calendario_maestro():
         pd.DataFrame(datos).drop_duplicates(subset=['match_id']).to_csv(FILE_CALENDAR, index=False, encoding='utf-8-sig')
     except: pass
 
-def extraer_maestro_jugadores():
+
+# ==============================================================================
+# ==============================================================================
+# MÓDULO 12: INFORMES DE PARTIDO (INTACTO)
+# ==============================================================================
+# ==============================================================================
+map_role_id_m12 = {}
+map_role_name_m12 = {}
+
+def cargar_roles_m12():
+    global map_role_id_m12, map_role_name_m12
+    map_role_id_m12.clear()
+    map_role_name_m12.clear()
+    try:
+        if os.path.exists(FILE_ROLES):
+            df_roles = pd.read_csv(FILE_ROLES)
+            for _, r in df_roles.iterrows():
+                pid = str(r.get('PLAYER_ID', '')).strip()
+                if pid.endswith('.0'): pid = pid[:-2]
+                role = str(r.get('ROLE_NAME', 'N/A'))
+                map_role_id_m12[pid] = role
+                pname = remove_accents(str(r.get('PLAYER_NAME', '')).lower().strip())
+                map_role_name_m12[pname] = role
+    except: pass
+
+def extraer_maestro_jugadores_m12():
     equipos = []
     try:
         r = requests.get("https://www.feb.es/primerafeb/equipos.aspx", headers=HEADERS_WEB)
@@ -228,7 +250,7 @@ def extraer_maestro_jugadores():
         except: pass
     if lista: pd.DataFrame(lista).drop_duplicates(subset=['Player', 'Team']).to_csv(os.path.join(DATA_DIR, "maestro_jugadores_primerafeb.csv"), index=False, encoding='utf-8-sig')
 
-def obtener_partidos_jornada(jornada_id):
+def obtener_partidos_jornada_m12(jornada_id):
     url_calendario = f"https://www.feb.es/competiciones/calendario/primerafeb/1/2025" 
     res = requests.get(url_calendario, headers=HEADERS_WEB)
     soup = BeautifulSoup(res.text, 'html.parser')
@@ -259,7 +281,7 @@ def obtener_partidos_jornada(jornada_id):
                 })
     return datos_partidos
 
-def extraer_partido_api(match_id):
+def extraer_partido_api_m12(match_id):
     session = requests.Session()
     session.headers.update({"User-Agent": HEADERS_WEB['User-Agent'], "Origin": BASE_URL, "Referer": BASE_URL+"/", "Accept": "application/json"})
     try:
@@ -269,6 +291,7 @@ def extraer_partido_api(match_id):
         token = soup.find('input', id='_ctl0_token')['value'].strip()
         session.headers.update({"Authorization": f"Bearer {token}"})
     except: return False
+
     base_url_api = "https://intrafeb.feb.es/LiveStats.API/api/v1"
     try:
         data_pbp = session.get(f"{base_url_api}/KeyFacts/{match_id}").json()
@@ -285,7 +308,7 @@ def extraer_partido_api(match_id):
         return True
     except: return False
 
-def limpiar_y_avanzadas(match_id, local, visitante, jornada):
+def limpiar_y_avanzadas_m12(match_id, local, visitante, jornada):
     jornada_str = f"Jornada-{jornada}"; local_str = limpiar_texto_archivo(local); visit_str = limpiar_texto_archivo(visitante)
     df_box = pd.read_csv(os.path.join(DATA_DIR, f"boxscore_{match_id}.csv"))
     mapeo = {'team_name': 'Team', 'no': 'No', 'inn': 'Starter', 'name': 'Player', 'minFormatted': 'Min', 'pts': 'PTS',
@@ -359,44 +382,47 @@ def limpiar_y_avanzadas(match_id, local, visitante, jornada):
 
     return ruta_pbp_clean, ruta_box_clean
 
-# ==============================================================================
-# MÓDULO 12: MEMORIA Y FUNCIONES 
-# ==============================================================================
-map_role_id = {}
-map_role_name = {}
-
-def cargar_roles_m12():
-    global map_role_id, map_role_name
-    map_role_id.clear()
-    map_role_name.clear()
-    try:
-        if os.path.exists(FILE_ROLES):
-            df_roles = pd.read_csv(FILE_ROLES)
-            for _, r in df_roles.iterrows():
-                pid = str(r.get('PLAYER_ID', '')).strip()
-                if pid.endswith('.0'): pid = pid[:-2]
-                role = str(r.get('ROLE_NAME', 'N/A'))
-                map_role_id[pid] = role
-                pname = remove_accents(str(r.get('PLAYER_NAME', '')).lower().strip())
-                map_role_name[pname] = role
-    except Exception as e:
-        print(f"⚠️ Error M12 Roles: {e}")
-
-def generar_html_quintetos(ruta_pbp_clean, ruta_box_clean, match_id, equipo_local, equipo_visit, fecha_partido):
+def generar_html_quintetos_m12(ruta_pbp_clean, ruta_box_clean, match_id, equipo_local, equipo_visit, fecha_partido):
     df_pbp = pd.read_csv(ruta_pbp_clean)
     df_box = pd.read_csv(ruta_box_clean)
     
-    cargar_roles_m12()
+    lista_maestro = []
+    try:
+        if os.path.exists(os.path.join(DATA_DIR, "maestro_jugadores_primerafeb.csv")):
+            df_maestro = pd.read_csv(os.path.join(DATA_DIR, "maestro_jugadores_primerafeb.csv"))
+            for _, r in df_maestro.iterrows(): lista_maestro.append({'name': str(r['Player']).strip().upper(), 'pos': str(r['Position']).strip()})
+    except: pass
 
     dict_roles = {}
     for _, r in df_box.iterrows():
         pid = str(r.get('Player_ID', ''))
         if pid.endswith('.0'): pid = pid[:-2]
         pname_clean = remove_accents(str(r.get('Player', '')).strip().lower())
-        dict_roles[pname_clean] = map_role_id.get(pid, map_role_name.get(pname_clean, "N/A"))
+        dict_roles[pname_clean] = map_role_id_m12.get(pid, map_role_name_m12.get(pname_clean, "N/A"))
+
+    def obtener_posicion_segura(box_name):
+        if not lista_maestro: return "Alero"
+        try:
+            box_clean = remove_accents(box_name.upper()).replace('.', ''); box_parts = box_clean.split()
+            if not box_parts: return "Alero"
+            for m in lista_maestro:
+                full_clean = remove_accents(m['name']).replace('.', ''); full_parts = full_clean.split()
+                if not full_parts: continue
+                if box_parts[0][0] == full_parts[0][0]: 
+                    if all(part in full_parts or part in full_clean for part in box_parts[1:]): return m['pos']
+            last_name = box_parts[-1]
+            if len(last_name) > 3:
+                posibles = [m for m in lista_maestro if last_name in remove_accents(m['name'])]
+                if len(posibles) == 1: return posibles[0]['pos']
+                elif len(posibles) > 1:
+                    for p in posibles:
+                        if any(f[0] == box_parts[0][0] for f in remove_accents(p['name']).split()): return p['pos']
+                    return posibles[0]['pos']
+            return "Alero"
+        except: return "Alero"
 
     try:
-        with open(os.path.join(DATA_DIR, "logos_equipos.json"), "r", encoding="utf-8") as f: diccionario_escudos = json.load(f)
+        with open(FILE_LOGOS, "r", encoding="utf-8") as f: diccionario_escudos = json.load(f)
     except: diccionario_escudos = {}
     
     def get_escudo(eq_name):
@@ -492,6 +518,7 @@ def generar_html_quintetos(ruta_pbp_clean, ruta_box_clean, match_id, equipo_loca
 
     lineups_local, lineups_visitante = calc_quintetos('Lineup_Home', actual_local_pbp, actual_visit_pbp), calc_quintetos('Lineup_Away', actual_visit_pbp, actual_local_pbp)
 
+    orden_pos = {'Base': 1, 'Escolta': 2, 'Alero': 3, 'Ala Pívot': 4, 'Pívot': 5}
     def gen_filas(lineups_data):
         filas = ""
         particulas = ['mc', 'mac', 'de', 'del', 'la', 'las', 'los', 'san', 'van', 'von', 'da', 'di']
@@ -509,12 +536,14 @@ def generar_html_quintetos(ruta_pbp_clean, ruta_box_clean, match_id, equipo_loca
                 pts = p.strip().split(" ")
                 if len(pts) > 2 and pts[1].lower() in particulas: n_corto = " ".join(pts[:4]) if len(pts) > 3 and pts[2].lower() in particulas else " ".join(pts[:3])
                 else: n_corto = " ".join(pts[:2]) if len(pts) >= 2 else p
+                pos = obtener_posicion_segura(p); rank = orden_pos.get(pos, 6)
                 
                 role = dict_roles.get(p_clean, "N/A")
-                html_tarjeta = f"<div class='player-card'><div style='color:#2b6cb0; font-size:10px; font-weight:900; margin-bottom:4px; text-transform:uppercase;'>{role}</div><img src='{f_url}'><br>{n_corto}</div>"
-                jugadores_ord.append(html_tarjeta)
+                html_tarjeta = f"<div class='player-card'><div style='color:#2b6cb0; font-size:10px; font-weight:900; margin-bottom:4px; text-transform:uppercase;'>{role}</div><img src='{f_url}'><br>{n_corto}<br><span class='player-pos'>{pos}</span></div>"
+                jugadores_ord.append({'html': html_tarjeta, 'rank': rank})
             
-            faces_html = "".join(jugadores_ord)
+            jugadores_ord.sort(key=lambda x: x['rank'])
+            faces_html = "".join([j['html'] for j in jugadores_ord])
             pm_class = "pm-positive" if "+" in l['pm'] else ("pm-negative" if "-" in l['pm'] else "")
             
             filas += f"<tr><td class='lineups-cell'><div class='players-flex'>{faces_html}</div></td><td style='font-weight: bold;'>{l['tiempo']}</td><td class='{pm_class}' style='font-size: 17px;'>{l['pm']}</td><td style='font-weight: bold; color: #2b6cb0;'>{l['pts']}</td><td style='font-weight: bold; color: #e53e3e;'>{l['pa']}</td><td>{l['dreb']}</td><td style='color: #48bb78; font-weight: bold;'>{l['oreb']}</td><td style='color: #e53e3e; font-weight: bold;'>{l['opp_oreb']}</td><td>{l['ast']}</td><td style='color: #e53e3e; font-weight: bold;'>{l['tov']}</td><td style='font-weight: bold;'>{l['ortg']}</td><td style='font-weight: bold;'>{l['drtg']}</td><td>{l['efg_pct']}</td><td>{l['ts_pct']}</td><td>{l['orb_pct']}</td><td>{l['drb_pct']}</td><td>{l['ast_to']}</td><td style='font-weight: bold; color: #4a5568;'>{l['pace']}</td></tr>"
@@ -540,6 +569,7 @@ def generar_html_quintetos(ruta_pbp_clean, ruta_box_clean, match_id, equipo_loca
         .players-flex {{ display: flex; justify-content: flex-start; gap: 2px; padding-left: 5px; }}
         .player-card {{ text-align: center; font-size: 9px; width: 65px; font-weight: bold; color: #4a5568; overflow: hidden; }}
         .player-card img {{ width: 38px; height: 38px; border-radius: 50%; border: 2px solid #cbd5e0; object-fit: cover; }}
+        .player-pos {{ font-size: 8px; color: #718096; font-weight: normal; text-transform: uppercase; }}
         .pm-positive {{ color: #48bb78; font-weight: bold; }} .pm-negative {{ color: #f56565; font-weight: bold; }}
         .legend-grid {{ display: grid; grid-template-columns: repeat(3, 1fr); gap: 20px; background: #fff; padding: 25px; border-radius: 12px; margin-top: 30px; margin-bottom: 40px; box-shadow: 0 4px 6px rgba(0,0,0,0.05); }}
         .legend-item {{ font-size: 12px; color: #4a5568; line-height: 1.6; text-align: left; }} .legend-item b {{ color: #2d3748; }}
@@ -563,14 +593,14 @@ def generar_html_quintetos(ruta_pbp_clean, ruta_box_clean, match_id, equipo_loca
     with open(ruta_final, "w", encoding="utf-8") as f: f.write(html)
     return ruta_final
 
-def generar_html_boxscore(ruta_box_clean, ruta_pbp_clean, match_id, equipo_local, equipo_visit, fecha_partido):
+def generar_html_boxscore_m12(ruta_box_clean, ruta_pbp_clean, match_id, equipo_local, equipo_visit, fecha_partido):
     df_box = pd.read_csv(ruta_box_clean)
     df_pbp = pd.read_csv(ruta_pbp_clean)
     
     cargar_roles_m12()
     
     try:
-        with open(os.path.join(DATA_DIR, "logos_equipos.json"), "r", encoding="utf-8") as f: diccionario_escudos = json.load(f)
+        with open(FILE_LOGOS, "r", encoding="utf-8") as f: diccionario_escudos = json.load(f)
     except: diccionario_escudos = {}
     
     def get_escudo(eq_name):
@@ -656,7 +686,7 @@ def generar_html_boxscore(ruta_box_clean, ruta_pbp_clean, match_id, equipo_local
             pid = str(safe_get(row, ['Player_ID'], ""))
             if pid.endswith('.0'): pid = pid[:-2]
             
-            role = map_role_id.get(pid, map_role_name.get(remove_accents(player_raw.strip().lower()), "N/A"))
+            role = map_role_id_m12.get(pid, map_role_name_m12.get(remove_accents(player_raw.strip().lower()), "N/A"))
 
             foto = safe_get(row, ['Logo_URL'])
             if pd.isna(foto) or str(foto).strip() in ["", "nan", "None"]: foto = "https://via.placeholder.com/40/cbd5e0/ffffff?text=+"
@@ -736,13 +766,215 @@ def generar_html_boxscore(ruta_box_clean, ruta_pbp_clean, match_id, equipo_local
         <div class="footer">© 2026 Analizing Basketball | <a href="https://www.analizingbasketball.com" target="_blank">www.analizingbasketball.com</a></div>
     </body></html>
     """
+    clean_local = limpiar_texto_archivo(equipo_local); clean_visit = limpiar_texto_archivo(equipo_visit)
     ruta_final = os.path.join(REPORTS_DIR, f"Boxscore_{match_id}_{clean_local}_vs_{clean_visit}.html")
     with open(ruta_final, "w", encoding="utf-8") as f: f.write(html)
     return ruta_final
 
 
 # ==============================================================================
-# MÓDULO 13 Y 14: MEMORIA GLOBAL Y FUNCIONES DE SCOUTING CONTEXTUAL Y SPLITS
+# ==============================================================================
+# MÓDULO 13: TACTICAL SPLITS ENGINE (AISLADO)
+# ==============================================================================
+# ==============================================================================
+map_role_m13 = {}
+map_pos_m13 = {}
+map_name_m13 = {}
+map_efg_m13, map_ts_m13, map_tov_m13, map_orb_m13, map_ftr_m13, map_usg_m13 = {}, {}, {}, {}, {}, {}
+custom_photos_m13 = {}
+dicc_logos_m13 = {}
+
+def cargar_datos_m13():
+    global map_role_m13, map_pos_m13, map_name_m13, map_efg_m13, map_ts_m13, map_tov_m13, map_orb_m13, map_ftr_m13, map_usg_m13, custom_photos_m13, dicc_logos_m13
+    map_role_m13.clear(); map_pos_m13.clear(); map_name_m13.clear()
+    try:
+        if os.path.exists(FILE_ROLES):
+            df_roles = pd.read_csv(FILE_ROLES)
+            df_roles['TEAM'] = df_roles.get('TEAM', pd.Series()).replace({'CLUB OURENSE BALONCESTO': 'CLOUD.GAL OURENSE BALONCESTO', 'OURENSE BALONCESTO': 'CLOUD.GAL OURENSE BALONCESTO'})
+            for _, r in df_roles.iterrows():
+                pid = safe_id(str(r.get('PLAYER_ID', '')))
+                map_role_m13[pid] = str(r.get('ROLE_NAME', 'N/A'))
+                map_pos_m13[pid] = str(r.get('POSITION', 'N/A'))
+                map_name_m13[pid] = str(r.get('PLAYER_NAME', 'Unknown'))
+                
+                if 'eFG%' in df_roles.columns: map_efg_m13[pid] = r.get('eFG%', 0)
+                if 'TS%' in df_roles.columns: map_ts_m13[pid] = r.get('TS%', 0)
+                if 'TOV%' in df_roles.columns: map_tov_m13[pid] = r.get('TOV%', 0)
+                if 'ORB%' in df_roles.columns: map_orb_m13[pid] = r.get('ORB%', 0)
+                if 'FTr' in df_roles.columns: map_ftr_m13[pid] = r.get('FTr', 0)
+                if 'USG%' in df_roles.columns: map_usg_m13[pid] = r.get('USG%', 0)
+    except: pass
+
+    try:
+        if os.path.exists(FILE_PHOTOS):
+            with open(FILE_PHOTOS, "r", encoding="utf-8") as f: custom_photos_m13 = json.load(f)
+    except: custom_photos_m13 = {}
+
+    try:
+        if os.path.exists(FILE_LOGOS):
+            with open(FILE_LOGOS, "r", encoding="utf-8") as f: dicc_logos_m13 = json.load(f)
+    except: dicc_logos_m13 = {}
+
+def create_signatures_m13(row):
+    players = [safe_id(row['P1_ID']), safe_id(row['P2_ID']), safe_id(row['P3_ID']), safe_id(row['P4_ID']), safe_id(row['P5_ID'])]
+    roles = [map_role_m13.get(p, "Unknown") for p in players]
+    if "Unknown" in roles: return pd.Series(["Incomplete", "Incomplete"])
+    roles.sort()
+    arch_sig = " / ".join(roles)
+    players.sort()
+    real_sig = "-".join(players)
+    return pd.Series([arch_sig, real_sig])
+
+def generar_html_splits_m13(s_rnd, e_rnd, eq, m_filt):
+    if not os.path.exists(FILE_LINEUPS):
+        raise HTTPException(status_code=404, detail="Archivo LINEUPS maestro no encontrado en el servidor.")
+        
+    cargar_datos_m13()
+
+    df_lineups_master = pd.read_csv(FILE_LINEUPS)
+    df_lineups_master['TEAM'] = df_lineups_master.get('TEAM', pd.Series()).replace({'CLUB OURENSE BALONCESTO': 'CLOUD.GAL OURENSE BALONCESTO', 'OURENSE BALONCESTO': 'CLOUD.GAL OURENSE BALONCESTO'})
+
+    for col in ['P1_ID', 'P2_ID', 'P3_ID', 'P4_ID', 'P5_ID']:
+        if col not in df_lineups_master.columns: df_lineups_master[col] = ""
+        else: df_lineups_master[col] = df_lineups_master[col].apply(safe_id)
+
+    if 'ROUND' in df_lineups_master.columns:
+        df_lineups_master['ROUND_NUM'] = pd.to_numeric(df_lineups_master['ROUND'], errors='coerce').fillna(0).astype(int)
+        df_split = df_lineups_master[(df_lineups_master['ROUND_NUM'] >= s_rnd) & (df_lineups_master['ROUND_NUM'] <= e_rnd)].copy()
+    else:
+        df_split = df_lineups_master.copy()
+        
+    if eq != "TODOS": df_split = df_split[df_split['TEAM'] == eq].copy()
+    if df_split.empty: raise HTTPException(status_code=404, detail=f"No hay datos para el equipo {eq} en las jornadas {s_rnd} a {e_rnd}.")
+
+    df_split[['ARCHETYPE', 'REAL_LINEUP']] = df_split.apply(create_signatures_m13, axis=1)
+    df_valid = df_split[df_split['ARCHETYPE'] != "Incomplete"].copy()
+
+    arch_stats = df_valid.groupby(['TEAM', 'ARCHETYPE']).agg({'MINUTES': 'sum', 'PTS_FOR': 'sum', 'PTS_AGAINST': 'sum'}).reset_index()
+    arch_stats = arch_stats[arch_stats['MINUTES'] >= m_filt].copy()
+
+    if arch_stats.empty: raise HTTPException(status_code=404, detail=f"Ningún quinteto superó el filtro de {m_filt} minutos jugados juntos.")
+
+    real_lineup_stats = df_valid.groupby(['TEAM', 'ARCHETYPE', 'REAL_LINEUP']).agg({'MINUTES': 'sum'}).reset_index()
+    best_real_lineups = real_lineup_stats.sort_values('MINUTES', ascending=False).drop_duplicates(subset=['TEAM', 'ARCHETYPE'])
+
+    efficiency = pd.merge(arch_stats, best_real_lineups[['TEAM', 'ARCHETYPE', 'REAL_LINEUP']], on=['TEAM', 'ARCHETYPE'])
+    efficiency['PTS_40'] = np.where(efficiency['MINUTES'] > 0, ((efficiency['PTS_FOR'] / efficiency['MINUTES']) * 40), 0)
+    efficiency['PA_40'] = np.where(efficiency['MINUTES'] > 0, ((efficiency['PTS_AGAINST'] / efficiency['MINUTES']) * 40), 0)
+    efficiency['NET_RATING'] = (efficiency['PTS_40'] - efficiency['PA_40']).round(1)
+    for col in ['PTS_40', 'PA_40']: efficiency[col] = efficiency[col].round(1)
+
+    logo_empresa_b64 = get_image_base64(LOGO_EMPRESA)
+    logo_feb_b64 = get_image_base64(LOGO_FEB)
+    logo_liga_b64 = get_image_base64(LOGO_LIGA)
+
+    eq_name_display = eq if eq != "TODOS" else "League Wide"
+    round_title = f"Rounds {s_rnd} to {e_rnd}"
+    
+    html_content = f"""<!DOCTYPE html><html><head><meta charset="utf-8"><title>Tactical Splits: {eq_name_display}</title>
+    <style>
+        body {{ font-family: 'Segoe UI', sans-serif; background: #f4f6f9; color: #333; margin: 0; padding: 20px; padding-bottom: 80px; }}
+        .top-banner {{ background: #fff; padding: 20px 30px; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); margin-bottom: 20px; }}
+        .top-logos {{ display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid #e2e8f0; padding-bottom: 15px; margin-bottom: 15px; }}
+        .logo-side {{ height: 60px; max-width: 130px; object-fit: contain; }} .logo-center {{ height: 90px; max-width: 250px; object-fit: contain; }}
+        .header-title-block {{ text-align: center; }} h1 {{ margin: 0; font-size: 32px; color: #1a202c; text-transform: uppercase; }}
+        .subtitle {{ color: #e53e3e; font-size: 16px; margin-top: 10px; font-weight: bold; }}
+        .legend-grid {{ display: grid; grid-template-columns: repeat(4, 1fr); gap: 20px; background: #fff; padding: 20px; border-radius: 8px; border: 1px solid #e2e8f0; margin-bottom: 40px; }}
+        .legend-item {{ font-size: 12px; color: #4a5568; line-height: 1.6; text-align: left; }} .legend-item b {{ color: #2d3748; }}
+        .team-section {{ background: #fff; border-radius: 12px; padding: 20px; margin-bottom: 40px; box-shadow: 0 4px 6px rgba(0,0,0,0.05); border: 1px solid #e2e8f0; }}
+        .team-title-block {{ display: flex; align-items: center; gap: 15px; border-bottom: 3px solid #2b6cb0; padding-bottom: 10px; margin-bottom: 20px; }}
+        .team-shield {{ width: 60px; height: 60px; object-fit: contain; }} h2 {{ margin: 0; font-size: 28px; color: #2d3748; text-transform: uppercase; font-weight: 800; }}
+        .table-title {{ font-size: 18px; font-weight: bold; margin-bottom: 10px; padding-left: 10px; border-left: 5px solid; text-transform: uppercase; }}
+        .title-top {{ border-color: #2b6cb0; color: #2b6cb0; }} .title-bot {{ border-color: #718096; color: #4a5568; }}
+        .table-container {{ overflow-x: auto; margin-bottom: 30px; }}
+        table {{ width: 100%; min-width: 1100px; border-collapse: collapse; text-align: center; table-layout: fixed; }}
+        th {{ background: #2d3748; color: #fff; padding: 18px 6px; font-size: 16px; font-weight: 800; text-transform: uppercase; }} 
+        td {{ padding: 14px 4px; border-bottom: 1px solid #e2e8f0; vertical-align: middle; }}
+        th.col-lineup {{ width: 40%; text-align: left; padding-left: 15px; }} .players-flex {{ display: flex; justify-content: flex-start; gap: 8px; flex-wrap: nowrap; }}
+        .player-card {{ text-align: center; font-size: 13px; width: 100px; font-weight: bold; color: #4a5568; background: #f8fafc; padding: 12px 4px; border-radius: 8px; border: 1px solid #edf2f7; }}
+        .player-role-label {{ font-size: 12px; color: #2b6cb0; font-weight: 950; margin-bottom: 8px; display: flex; align-items: center; justify-content: center; text-transform: uppercase; height: 32px; overflow: visible; line-height: 1.1; }}
+        .player-card img {{ width: 52px; height: 52px; border-radius: 50%; border: 2px solid #cbd5e0; object-fit: cover; margin-bottom: 6px; background: #fff; }}
+        .player-pos {{ font-size: 10px; color: #fff; background: #718096; padding: 3px 7px; border-radius: 4px; text-transform: uppercase; display: inline-block; margin-top: 6px; font-weight: bold; }}
+        .metric-adv {{ font-size: 17px; font-weight: 700; color: #2d3748; }} .metric-big {{ font-size: 17px; font-weight: 800; color: #2d3748; }} .metric-huge {{ font-size: 19px; font-weight: 900; }}
+        .text-green {{ color: #38a169; }} .text-red {{ color: #e53e3e; }} .text-blue {{ color: #2b6cb0; }}
+        .footer {{ position: fixed; bottom: 0; left: 0; width: 100%; background: #2d3748; color: #cbd5e0; text-align: center; padding: 15px 0; font-size: 13px; border-top: 3px solid #ed8936; }}
+    </style></head><body>
+        <div class="top-banner"><div class="top-logos"><img src="data:image/png;base64,{logo_feb_b64}" class="logo-side"><img src="data:image/png;base64,{logo_empresa_b64}" class="logo-center"><img src="data:image/png;base64,{logo_liga_b64}" class="logo-side"></div>
+        <div class="header-title-block"><h1>Tactical Splits Slicer</h1><div class="subtitle">Primera FEB | {round_title} | Filter: Min {m_filt} minutes played</div></div></div>
+        <div class="legend-grid">
+            <div class="legend-item"><b>TOTAL MIN:</b> Split minutes.<br><b>PTS /40:</b> Proj. points per 40 mins.<br><b>PA /40:</b> Proj. allowed per 40 mins.</div>
+            <div class="legend-item"><b>NET RTG /40:</b> Point diff. per 40 mins.<br><b>TS% *:</b> True Shooting %.<br><b>eFG% *:</b> Effective Field Goal %.</div>
+            <div class="legend-item"><b>TOV% *:</b> Turnover Percentage.<br><b>ORB% *:</b> Offensive Rebound %.<br><b>FTr *:</b> Free Throw Rate.<br><b>USG% *:</b> Usage Percentage.</div>
+            <div class="legend-item"><i>* Analytical Note:</i><br>Metrics represent the theoretical average of the 5 players based on individual season performance.</div>
+        </div>
+    """
+
+    def render_table(df_subset):
+        t_html = f"""<div class='table-container'><table><thead><tr>
+            <th class='col-lineup'></th><th>TOTAL MIN</th><th>PTS /40</th><th>PA /40</th><th>NET RTG /40</th>
+            <th style='background:#2c7a7b'>TS% *</th><th style='background:#2c7a7b'>eFG% *</th><th style='background:#2c7a7b'>TOV% *</th><th style='background:#2c7a7b'>ORB% *</th><th style='background:#2c7a7b'>FTr *</th><th style='background:#2c7a7b'>USG% *</th>
+            </tr></thead><tbody>"""
+        for _, row in df_subset.iterrows():
+            pm_val = row['NET_RATING']
+            color_class = "text-green" if pm_val > 0 else ("text-red" if pm_val < 0 else "")
+            sign = "+" if pm_val > 0 else ""
+            p_ids = row['REAL_LINEUP'].split("-")
+            p_ids.sort(key=lambda x: custom_photos_m13.get(x, {}).get('POS_ORDER', 6))
+            cards_html = ""
+            avg_efg, avg_ts, avg_tov, avg_orb, avg_ftr, avg_usg, count = 0, 0, 0, 0, 0, 0, 0
+            
+            for pid in p_ids:
+                p_data = custom_photos_m13.get(pid, {})
+                name_short = get_short_name(p_data.get("PLAYER_NAME", map_name_m13.get(pid, "Unknown")))
+                pos = p_data.get("POSITION", map_pos_m13.get(pid, "N/A"))
+                role = map_role_m13.get(pid, "Unknown Role")
+                foto_url = p_data.get("PHOTO_URL", f"https://imagenes.feb.es/Foto.aspx?c={pid}")
+                cards_html += f"""<div class='player-card'><span class='player-role-label'>{role}</span><img src='{foto_url}' onerror="this.src='https://via.placeholder.com/50/cbd5e0/ffffff?text=+'"><br>{name_short}<br><span class='player-pos'>{pos}</span></div>"""
+                
+                if pid in map_efg_m13:
+                    avg_efg += map_efg_m13.get(pid, 0); avg_ts += map_ts_m13.get(pid, 0); avg_tov += map_tov_m13.get(pid, 0)
+                    avg_orb += map_orb_m13.get(pid, 0); avg_ftr += map_ftr_m13.get(pid, 0); avg_usg += map_usg_m13.get(pid, 0); count += 1
+            
+            f_efg = f"{(avg_efg/count):.1f}%" if count > 0 else "N/A"
+            f_ts = f"{(avg_ts/count):.1f}%" if count > 0 else "N/A"
+            f_tov = f"{(avg_tov/count):.1f}%" if count > 0 else "N/A"
+            f_orb = f"{(avg_orb/count):.1f}%" if count > 0 else "N/A"
+            f_ftr = f"{(avg_ftr/count):.3f}" if count > 0 else "N/A"
+            f_usg = f"{(avg_usg/count):.1f}%" if count > 0 else "N/A"
+            
+            t_html += f"""<tr><td style='text-align:left; padding-left:15px;'><div class='players-flex'>{cards_html}</div></td><td class='metric-big'>{row['MINUTES']:.1f}</td><td class='metric-big text-blue'>{row['PTS_40']:.1f}</td><td class='metric-big text-red'>{row['PA_40']:.1f}</td><td class='metric-huge {color_class}'>{sign}{pm_val}</td><td class='metric-adv' style='color:#B22222'>{f_ts}</td><td class='metric-adv'>{f_efg}</td><td class='metric-adv'>{f_tov}</td><td class='metric-adv'>{f_orb}</td><td class='metric-adv'>{f_ftr}</td><td class='metric-adv'>{f_usg}</td></tr>"""
+        t_html += "</tbody></table></div>"
+        return t_html
+
+    equipos = sorted(efficiency['TEAM'].unique())
+    for equipo in equipos:
+        df_equipo = efficiency[efficiency['TEAM'] == equipo].sort_values(by='NET_RATING', ascending=False)
+        top3 = df_equipo.head(3)
+        bottom3 = df_equipo.loc[~df_equipo.index.isin(top3.index)].tail(3) if len(df_equipo) > 3 else pd.DataFrame()
+
+        eq_clean = clear_string(equipo).replace(" ", "")
+        logo_url = "https://via.placeholder.com/60"
+        for k, v in dicc_logos_m13.items():
+            if clear_string(k).replace(" ", "") == eq_clean or eq_clean in clear_string(k).replace(" ", ""): logo_url = v; break
+
+        html_content += f"""<div class="team-section"><div class="team-title-block"><img src="{logo_url}" class="team-shield"><h2>{equipo}</h2></div><div class="table-title title-top">Most Efficient Lineups ({round_title})</div>{render_table(top3)}"""
+        if not bottom3.empty: html_content += f"""<div class="table-title title-bot">Least Efficient Lineups ({round_title})</div>{render_table(bottom3)}"""
+        html_content += "</div>"
+
+    html_content += "<div class='footer'>© 2026 Analizing Basketball | <a href='https://www.analizingbasketball.com' target='_blank'>www.analizingbasketball.com</a></div></body></html>"
+    
+    eq_f = eq.replace(" ", "_") if eq != "TODOS" else "ALL_TEAMS"
+    out_name = f"SPLIT_J{s_rnd}_J{e_rnd}_{eq_f}.html"
+    ruta_final = os.path.join(REPORTS_DIR, out_name)
+    with open(ruta_final, "w", encoding="utf-8") as f: f.write(html_content)
+    
+    return ruta_final
+
+
+# ==============================================================================
+# ==============================================================================
+# MÓDULO 14: CONTEXTUAL SCOUTING (AISLADO)
+# ==============================================================================
 # ==============================================================================
 map_role_m14, map_pos_m14, map_name_m14 = {}, {}, {}
 map_efg_m14, map_ts_m14, map_tov_m14, map_orb_m14, map_ftr_m14, map_usg_m14 = {}, {}, {}, {}, {}, {}
@@ -750,20 +982,11 @@ custom_photos_m14, dicc_logos_m14 = {}, {}
 
 def cargar_datos_m14():
     global map_role_m14, map_pos_m14, map_name_m14, map_efg_m14, map_ts_m14, map_tov_m14, map_orb_m14, map_ftr_m14, map_usg_m14, custom_photos_m14, dicc_logos_m14
-    map_role_m14.clear()
-    map_pos_m14.clear()
-    map_name_m14.clear()
-    map_efg_m14.clear()
-    map_ts_m14.clear()
-    map_tov_m14.clear()
-    map_orb_m14.clear()
-    map_ftr_m14.clear()
-    map_usg_m14.clear()
+    map_role_m14.clear(); map_pos_m14.clear(); map_name_m14.clear()
     try:
         if os.path.exists(FILE_ROLES):
             df_roles = pd.read_csv(FILE_ROLES)
-            TEAM_FIXES = {'CLUB OURENSE BALONCESTO': 'CLOUD.GAL OURENSE BALONCESTO', 'OURENSE BALONCESTO': 'CLOUD.GAL OURENSE BALONCESTO'}
-            df_roles['TEAM'] = df_roles.get('TEAM', pd.Series()).replace(TEAM_FIXES)
+            df_roles['TEAM'] = df_roles.get('TEAM', pd.Series()).replace({'CLUB OURENSE BALONCESTO': 'CLOUD.GAL OURENSE BALONCESTO', 'OURENSE BALONCESTO': 'CLOUD.GAL OURENSE BALONCESTO'})
             for _, r in df_roles.iterrows():
                 pid = safe_id(str(r.get('PLAYER_ID', '')))
                 map_role_m14[pid] = str(r.get('ROLE_NAME', 'N/A'))
@@ -778,14 +1001,62 @@ def cargar_datos_m14():
     except: pass
     try:
         if os.path.exists(FILE_PHOTOS):
-            with open(FILE_PHOTOS, "r", encoding="utf-8") as f:
-                custom_photos_m14 = json.load(f)
+            with open(FILE_PHOTOS, "r", encoding="utf-8") as f: custom_photos_m14 = json.load(f)
     except: custom_photos_m14 = {}
     try:
         if os.path.exists(FILE_LOGOS):
-            with open(FILE_LOGOS, "r", encoding="utf-8") as f:
-                dicc_logos_m14 = json.load(f)
+            with open(FILE_LOGOS, "r", encoding="utf-8") as f: dicc_logos_m14 = json.load(f)
     except: dicc_logos_m14 = {}
+
+def construir_calendario_maestro_m14():
+    """Garantiza que el calendario exista antes de que M14 lo busque"""
+    try:
+        r = requests.get("https://www.feb.es/competiciones/calendario/primerafeb/1/2025", headers=HEADERS_WEB)
+        soup = BeautifulSoup(r.text, 'html.parser')
+        datos = []
+        for col in soup.find_all('div', class_='columna'):
+            h1 = col.find('h1', class_='titulo-modulo')
+            if not h1: continue
+            match_cab = re.search(r'(Jornada\s+\d+)\s+(.*)', h1.get_text(strip=True), re.IGNORECASE)
+            jornada = match_cab.group(1) if match_cab else h1.get_text(strip=True)
+            fecha = match_cab.group(2) if match_cab else ""
+            tabla = col.find('table')
+            if not tabla: continue
+            for fila in tabla.find_all('tr'):
+                if fila.find('th') or 'LOCAL' in fila.get_text(strip=True).upper(): continue
+                a_eq = fila.find_all('a', href=re.compile(r'Equipo\.aspx'))
+                a_p = fila.find('a', href=re.compile(r'Partido\.aspx\?p='))
+                if a_p and len(a_eq) >= 2:
+                    datos.append({
+                        "match_id": re.search(r'p=(\d+)', a_p['href']).group(1),
+                        "jornada": jornada, "fecha_jornada": fecha,
+                        "equipo_local": a_eq[0].get_text(strip=True), "equipo_visitante": a_eq[-1].get_text(strip=True),
+                        "resultado": a_p.get_text(strip=True)
+                    })
+        pd.DataFrame(datos).drop_duplicates(subset=['match_id']).to_csv(FILE_CALENDAR, index=False, encoding='utf-8-sig')
+    except: pass
+
+def extraer_partido_api_m14(match_id):
+    """Extrae JSON del Boxscore para M14 si falta algún partido histórico"""
+    session = requests.Session()
+    session.headers.update({"User-Agent": HEADERS_WEB['User-Agent'], "Origin": BASE_URL, "Referer": BASE_URL+"/", "Accept": "application/json"})
+    try:
+        res_web = session.get(f"https://www.feb.es/competiciones/partido/{match_id}")
+        token = BeautifulSoup(res_web.text, 'html.parser').find('input', id='_ctl0_token')['value'].strip()
+        session.headers.update({"Authorization": f"Bearer {token}"})
+    except: return False
+
+    base_url_api = "https://intrafeb.feb.es/LiveStats.API/api/v1"
+    try:
+        data_box = session.get(f"{base_url_api}/BoxScore/{match_id}").json()
+        teams_box = data_box.get('BOXSCORE', {}).get('TEAM', [])
+        box_flat = []
+        for t in teams_box:
+            t_name = t.get('name')
+            for p in t.get('PLAYER', []): p['team_name'] = t_name; box_flat.append(p)
+        pd.DataFrame(box_flat).to_csv(os.path.join(DATA_DIR, f'boxscore_{match_id}.csv'), index=False, encoding='utf-8-sig')
+        return True
+    except: return False
 
 def get_classic_order_m14(pid):
     p_data = custom_photos_m14.get(str(pid), {})
@@ -807,19 +1078,22 @@ def create_signatures_m14(row):
     players = [safe_id(row['P1_ID']), safe_id(row['P2_ID']), safe_id(row['P3_ID']), safe_id(row['P4_ID']), safe_id(row['P5_ID'])]
     roles = [map_role_m14.get(p, "Unknown") for p in players]
     if "Unknown" in roles: return pd.Series(["Incomplete", "Incomplete"])
-    roles.sort()
-    arch_sig = " / ".join(roles)
-    players.sort()
-    real_sig = "-".join(players)
+    roles.sort(); arch_sig = " / ".join(roles)
+    players.sort(); real_sig = "-".join(players)
     return pd.Series([arch_sig, real_sig])
 
 def limpiar_boxscore_api_m14(match_id):
+    """Fortificado contra columnas faltantes del JSON de FEB"""
     df_box = pd.read_csv(os.path.join(DATA_DIR, f"boxscore_{match_id}.csv"))
     mapeo = {'team_name': 'Team', 'no': 'No', 'inn': 'Starter', 'name': 'Player', 'minFormatted': 'Min', 'pts': 'PTS',
              'p2m': '2PM', 'p2a': '2PA', 'p3m': '3PM', 'p3a': '3PA', 'fgm': 'FGM', 'fga': 'FGA',
              'p1m': 'FTM', 'p1a': 'FTA', 'ro': 'OREB', 'rd': 'DREB', 'rt': 'TREB', 'assist': 'AST', 'to': 'TOV', 'st': 'STL',
              'bs': 'BLK', 'tc': 'BLKA', 'mt': 'DNK', 'pf': 'PF', 'rf': 'FD', 'pllss': '+/-', 'val': 'PIR', 'id': 'Player_ID', 'logo': 'Logo_URL'}
     df_clean = df_box[[c for c in mapeo.keys() if c in df_box.columns]].rename(columns=mapeo)
+    
+    if 'Min' not in df_clean.columns:
+        df_clean['Min'] = df_box.get('min', "00:00")
+        
     df_clean['Min_Sec_Num'] = df_clean['Min'].apply(parse_min)
     if 'Player' in df_clean.columns: df_clean['Player'] = df_clean['Player'].apply(formatear_nombre_jugador)
     return df_clean
@@ -835,7 +1109,6 @@ def HTML_LINEUPS_AGREGADOS_M14(efficiency, eq, context_str, m_filt):
             color_class = "text-green" if pm_val > 0 else ("text-red" if pm_val < 0 else "")
             sign = "+" if pm_val > 0 else ""
             p_ids = row['REAL_LINEUP'].split("-")
-            
             p_ids.sort(key=get_classic_order_m14)
             
             cards_html = ""
@@ -863,12 +1136,12 @@ def HTML_LINEUPS_AGREGADOS_M14(efficiency, eq, context_str, m_filt):
         return t_html
 
     df_equipo = efficiency.sort_values(by='NET_RATING', ascending=False)
-    top3 = df_equipo.head(3)
-    bottom3 = df_equipo.loc[~df_equipo.index.isin(top3.index)].tail(3) if len(df_equipo) > 3 else pd.DataFrame()
+    top3 = df_equipo.head(3); bottom3 = df_equipo.loc[~df_equipo.index.isin(top3.index)].tail(3) if len(df_equipo) > 3 else pd.DataFrame()
 
-    eq_clean = clear_string(eq); logo_url = "https://via.placeholder.com/60"
+    eq_clean = clear_string(eq).replace(" ", "")
+    logo_url = "https://via.placeholder.com/60"
     for k, v in dicc_logos_m14.items():
-        if clear_string(k) == eq_clean or eq_clean in clear_string(k): logo_url = v; break
+        if clear_string(k).replace(" ", "") == eq_clean or eq_clean in clear_string(k).replace(" ", ""): logo_url = v; break
 
     logo_empresa_b64 = get_image_base64(LOGO_EMPRESA)
     logo_feb_b64 = get_image_base64(LOGO_FEB)
@@ -913,14 +1186,14 @@ def HTML_LINEUPS_AGREGADOS_M14(efficiency, eq, context_str, m_filt):
     
     if not bottom3.empty: html_content += f"""<div class="table-title title-bot">Least Efficient Lineups</div>{render_table(bottom3)}"""
     html_content += "</div>"
-    
     html_content += "<div class='footer'>© 2026 Analizing Basketball | <a href='https://www.analizingbasketball.com' target='_blank'>www.analizingbasketball.com</a></div></body></html>"
     return html_content
 
 def HTML_BOXSCORE_AGREGADO_M14(df_all_box, eq_objetivo, context_str, team_games_count):
-    eq_clean = clear_string(eq_objetivo); logo_url = "https://via.placeholder.com/60"
+    eq_clean = clear_string(eq_objetivo).replace(" ", "")
+    logo_url = "https://via.placeholder.com/60"
     for k, v in dicc_logos_m14.items():
-        if clear_string(k) == eq_clean or eq_clean in clear_string(k): logo_url = v; break
+        if clear_string(k).replace(" ", "") == eq_clean or eq_clean in clear_string(k).replace(" ", ""): logo_url = v; break
     
     logo_empresa_b64 = get_image_base64(LOGO_EMPRESA)
     logo_feb_b64 = get_image_base64(LOGO_FEB)
@@ -934,9 +1207,10 @@ def HTML_BOXSCORE_AGREGADO_M14(df_all_box, eq_objetivo, context_str, team_games_
         t_df = df_all_box[df_all_box['Team'] == team].copy()
         agg_funcs = {'GP': 'sum', 'Starter': 'sum', 'Min_Sec_Num': 'sum', 'PTS': 'sum', 'PIR': 'sum', '2PM': 'sum', '2PA': 'sum', '3PM': 'sum', '3PA': 'sum', 'FTM': 'sum', 'FTA': 'sum', 'OREB': 'sum', 'DREB': 'sum', 'TREB': 'sum', 'AST': 'sum', 'STL': 'sum', 'TOV': 'sum', 'BLK': 'sum', 'FD': 'sum', 'PF': 'sum', '+/-': 'sum'}
         for c in agg_funcs.keys():
+            if c not in t_df.columns: t_df[c] = 0
             t_df[c] = pd.to_numeric(t_df[c], errors='coerce').fillna(0)
+            
         t_df_grouped = t_df.groupby(['Player_ID', 'Player', 'Logo_URL'], dropna=False).agg(agg_funcs).reset_index()
-        
         t_df_grouped['sort_idx'] = t_df_grouped['Player_ID'].apply(get_classic_order_m14)
         t_df_grouped = t_df_grouped.sort_values(by=['sort_idx', 'Min_Sec_Num'], ascending=[True, False])
         
@@ -959,11 +1233,9 @@ def HTML_BOXSCORE_AGREGADO_M14(df_all_box, eq_objetivo, context_str, team_games_
     tot_gmsc = 0
     for p in t_data['players']:
         pid = str(p.get('Player_ID', '')); pid = pid[:-2] if pid.endswith('.0') else pid
-        
         p_data = custom_photos_m14.get(pid, {})
         full_name = p_data.get("PLAYER_NAME", map_name_m14.get(pid, p['Player']))
         player = get_short_name(full_name)
-        
         role = map_role_m14.get(pid, "N/A"); foto = p.get('Logo_URL'); foto = "https://via.placeholder.com/40/cbd5e0/ffffff?text=+" if pd.isna(foto) else foto
         
         gp = int(p['GP']) if int(p['GP']) > 0 else 1
@@ -1060,8 +1332,9 @@ def HTML_BOXSCORE_AGREGADO_M14(df_all_box, eq_objetivo, context_str, team_games_
     """
     return html
 
+
 # ==============================================================================
-# 7. INTERFAZ API REST
+# 7. INTERFAZ API REST PRINCIPAL (ENDPOINTS)
 # ==============================================================================
 app = FastAPI()
 
@@ -1073,6 +1346,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# === MÓDULO 12 ===
 @app.get("/generar", response_class=HTMLResponse)
 def generar_scouting(jornada: int = 22, equipo: str = "MOVISTAR ESTUDIANTES", tipo_reporte: str = "quintetos"):
     cargar_roles_m12()
@@ -1112,37 +1386,48 @@ def generar_scouting(jornada: int = 22, equipo: str = "MOVISTAR ESTUDIANTES", ti
         
     return HTMLResponse(content=html_content, status_code=200)
 
+# === MÓDULO 13 ===
 @app.get("/splits", response_class=HTMLResponse)
 def splits_api(s_rnd: int = 1, e_rnd: int = 22, eq: str = "MOVISTAR ESTUDIANTES", m_filt: int = 10):
     if s_rnd > e_rnd:
         raise HTTPException(status_code=400, detail="La jornada de inicio no puede ser posterior a la jornada final.")
         
-    ruta_final = generar_html_splits(s_rnd, e_rnd, eq, m_filt)
+    ruta_final = generar_html_splits_m13(s_rnd, e_rnd, eq, m_filt)
     
     with open(ruta_final, "r", encoding="utf-8") as f:
         html_content = f.read()
         
     return HTMLResponse(content=html_content, status_code=200)
 
+# === MÓDULO 14 ===
 @app.get("/contextual", response_class=HTMLResponse)
 def generar_contextual(eq: str = "MOVISTAR ESTUDIANTES", venue: str = "ALL", n_games: int = 3, m_filt: int = 10, tipo_reporte: str = "quintetos"):
     if not os.path.exists(FILE_CALENDAR):
-        construir_calendario_maestro()
+        construir_calendario_maestro_m14()
+        
+    if not os.path.exists(FILE_CALENDAR):
+        raise HTTPException(status_code=500, detail="Error crítico: No se pudo generar el archivo de calendario maestro.")
         
     df_cal = pd.read_csv(FILE_CALENDAR)
-    eq_clean = clear_string(eq).replace("CLOUD.GAL ", "").replace("GRUPO CAESA SEGUROS ", "")
+    
+    # Matching súper seguro de strings sin espacios
+    eq_clean = clear_string(eq).replace("CLOUD.GAL ", "").replace("GRUPO CAESA SEGUROS ", "").replace(" ", "")
     
     df_cal_jugados = df_cal[df_cal['resultado'].astype(str).str.contains(r'\d+\s*-\s*\d+', regex=True, na=False)].copy()
+    if df_cal_jugados.empty:
+        raise HTTPException(status_code=404, detail="El calendario indica que no hay partidos jugados en toda la liga.")
+        
     df_cal_jugados['JORNADA_NUM'] = df_cal_jugados['jornada'].astype(str).str.extract(r'(\d+)')[0].astype(float)
     
-    mask_local = df_cal_jugados['equipo_local'].apply(lambda x: eq_clean in clear_string(str(x)))
-    mask_visit = df_cal_jugados['equipo_visitante'].apply(lambda x: eq_clean in clear_string(str(x)))
+    mask_local = df_cal_jugados['equipo_local'].apply(lambda x: eq_clean in clear_string(str(x)).replace(" ", ""))
+    mask_visit = df_cal_jugados['equipo_visitante'].apply(lambda x: eq_clean in clear_string(str(x)).replace(" ", ""))
     
     if venue == "HOME": df_team_games = df_cal_jugados[mask_local].copy()
     elif venue == "AWAY": df_team_games = df_cal_jugados[mask_visit].copy()
     else: df_team_games = df_cal_jugados[mask_local | mask_visit].copy()
     
-    if df_team_games.empty: raise HTTPException(status_code=404, detail=f"No hay partidos jugados de {eq} en condición {venue}.")
+    if df_team_games.empty: 
+        raise HTTPException(status_code=404, detail=f"No se encontraron partidos para {eq} en condición {venue}.")
         
     df_team_games = df_team_games.sort_values(by='JORNADA_NUM', ascending=False).head(n_games)
     jornadas_validas = df_team_games['JORNADA_NUM'].dropna().astype(int).tolist()
@@ -1153,11 +1438,17 @@ def generar_contextual(eq: str = "MOVISTAR ESTUDIANTES", venue: str = "ALL", n_g
     cargar_datos_m14()
     
     if tipo_reporte.lower() == "quintetos":
-        if not os.path.exists(FILE_LINEUPS): raise HTTPException(status_code=404, detail="Archivo LINEUPS no encontrado.")
+        if not os.path.exists(FILE_LINEUPS): 
+            raise HTTPException(status_code=404, detail="Archivo LINEUPS no encontrado en el servidor.")
+            
         df_lineups_master = pd.read_csv(FILE_LINEUPS)
         TEAM_FIXES = {'CLUB OURENSE BALONCESTO': 'CLOUD.GAL OURENSE BALONCESTO', 'OURENSE BALONCESTO': 'CLOUD.GAL OURENSE BALONCESTO'}
         df_lineups_master['TEAM'] = df_lineups_master.get('TEAM', pd.Series()).replace(TEAM_FIXES)
         
+        for col in ['P1_ID', 'P2_ID', 'P3_ID', 'P4_ID', 'P5_ID']:
+            if col not in df_lineups_master.columns: df_lineups_master[col] = ""
+            else: df_lineups_master[col] = df_lineups_master[col].apply(safe_id)
+            
         df_split = df_lineups_master[(df_lineups_master['TEAM'] == eq) & (pd.to_numeric(df_lineups_master['ROUND'], errors='coerce').isin(jornadas_validas))].copy()
         if df_split.empty: raise HTTPException(status_code=404, detail="No hay datos de quintetos registrados para esas jornadas.")
         
@@ -1184,10 +1475,10 @@ def generar_contextual(eq: str = "MOVISTAR ESTUDIANTES", venue: str = "ALL", n_g
         list_box_df = []
         for mid in match_ids:
             box_path = os.path.join(DATA_DIR, f"boxscore_{mid}.csv")
-            if not os.path.exists(box_path): extraer_partido_api(mid)
+            if not os.path.exists(box_path): extraer_partido_api_m14(mid)
             if os.path.exists(box_path):
                 df_b_clean = limpiar_boxscore_api_m14(mid)
-                is_target = df_b_clean['Team'].apply(lambda x: eq_clean in clear_string(str(x)))
+                is_target = df_b_clean['Team'].apply(lambda x: eq_clean in clear_string(str(x)).replace(" ", ""))
                 df_b_clean.loc[~is_target, 'Team'] = "OPPONENTS"
                 df_b_clean.loc[is_target, 'Team'] = eq
                 list_box_df.append(df_b_clean)
@@ -1198,6 +1489,9 @@ def generar_contextual(eq: str = "MOVISTAR ESTUDIANTES", venue: str = "ALL", n_g
         html_content = HTML_BOXSCORE_AGREGADO_M14(df_all_box, eq, context_str, len(jornadas_validas))
         return HTMLResponse(content=html_content, status_code=200)
 
+# ==============================================================================
+# EJECUCIÓN DEL SERVIDOR
+# ==============================================================================
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 10000))
     uvicorn.run("main:app", host="0.0.0.0", port=port)
