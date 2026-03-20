@@ -964,19 +964,6 @@ def limpiar_boxscore_api_m14(match_id):
              'p1m': 'FTM', 'p1a': 'FTA', 'ro': 'OREB', 'rd': 'DREB', 'rt': 'TREB', 'assist': 'AST', 'to': 'TOV', 'st': 'STL',
              'bs': 'BLK', 'tc': 'BLKA', 'mt': 'DNK', 'pf': 'PF', 'rf': 'FD', 'pllss': '+/-', 'val': 'PIR', 'id': 'Player_ID', 'logo': 'Logo_URL'}
     df_clean = df_box[[c for c in mapeo.keys() if c in df_box.columns]].rename(columns=mapeo)
-    
-    if 'Starter' in df_clean.columns:
-        df_clean['Starter'] = df_clean['Starter'].astype(str).str.strip().str.lower().apply(lambda x: 1 if x in ['1', 'true', 'yes', '*'] else 0)
-    else:
-        df_clean['Starter'] = 0
-        
-    if '+/-' in df_clean.columns:
-        df_clean['+/-'] = df_clean['+/-'].astype(str).str.replace('+', '', regex=False)
-        df_clean['+/-'] = pd.to_numeric(df_clean['+/-'], errors='coerce').fillna(0)
-        
-    if 'Min' not in df_clean.columns:
-        df_clean['Min'] = df_box.get('min', "00:00")
-        
     df_clean['Min_Sec_Num'] = df_clean['Min'].apply(parse_min)
     if 'Player' in df_clean.columns: df_clean['Player'] = df_clean['Player'].apply(formatear_nombre_jugador)
     return df_clean
@@ -1179,7 +1166,7 @@ def HTML_BOXSCORE_AGREGADO_M14(df_all_box, eq_objetivo, context_str, team_games_
     tm_mins_pg = (t_tot['Min_Sec_Num'] / team_gp) / 5
     tm_mins, tm_secs = divmod(int(tm_mins_pg), 60); tm_ts_denom = 2 * (tm_FGA + 0.44 * t_tot['FTA'])
     
-    html_tables += f"<tr class='total-row'><td colspan='5' class='td-info' style='text-align: right; padding-right: 15px;'><b>TEAM AVERAGES</b></td><td class='td-info'><b>{tm_mins:02d}:{tm_secs:02d}</b></td><td class='td-trad font-bold text-blue'>{t_tot['PTS']/team_gp:.1f}</td><td class='td-trad font-bold'>{t_tot['PIR']/team_gp:.1f}</td><td class='td-trad'>{t_tot['OREB']/team_gp:.1f}</td><td class='td-trad'>{t_tot['DREB']/team_gp:.1f}</td><td class='td-trad font-bold'>{t_tot['TRB']/team_gp:.1f}</td><td class='td-trad'>{t_tot['AST']/team_gp:.1f}</td><td class='td-trad text-green'>{t_tot['STL']/team_gp:.1f}</td><td class='td-trad text-red'>{t_tot['TOV']/team_gp:.1f}</td><td class='td-trad'>{t_tot['BLK']/team_gp:.1f}</td><td class='td-trad text-gray'>{t_tot['FD']/team_gp:.1f}</td><td class='td-trad text-gray'>{t_tot['PF']/team_gp:.1f}</td><td class='td-trad'></td><td class='td-shoot font-bold'>{t_tot['2PM']/team_gp:.1f}</td><td class='td-shoot text-gray'>{t_tot['2PA']/team_gp:.1f}</td><td class='td-shoot'>{(t_tot['2PM']/t_tot['2PA']*100) if t_tot['2PA']>0 else 0:.0f}%</td><td class='td-shoot font-bold'>{t_tot['3PM']/team_gp:.1f}</td><td class='td-shoot text-gray'>{t_tot['3PA']/team_gp:.1f}</td><td class='td-shoot'>{(t_tot['3PM']/t_tot['3PA']*100) if t_tot['3PA']>0 else 0:.0f}%</td><td class='td-shoot font-bold'>{t_tot['FTM']/team_gp:.1f}</td><td class='td-shoot text-gray'>{t_tot['FTA']/team_gp:.1f}</td><td class='td-shoot'>{(t_tot['FTM']/t_tot['FTA']*100) if t_tot['FTA']>0 else 0:.0f}%</td><td class='td-adv font-bold'>{tot_gmsc/team_gp:.1f}</td><td class='td-adv'>{(t_tot['PTS']/tm_ts_denom*100) if tm_ts_denom>0 else 0:.1f}%</td><td class='td-adv'>{((tm_FGM + 0.5 * t_tot['3PM'])/tm_FGA*100) if tm_FGA>0 else 0:.1f}%</td><td class='td-adv text-gray'>{(t_tot['3PA']/tm_FGA*100) if tm_FGA>0 else 0:.1f}%</td><td class='td-adv text-gray'>{(t_tot['FTA']/tm_FGA*100) if tm_FGA>0 else 0:.1f}%</td><td class='td-adv font-bold text-blue'>100.0%</td><td class='td-adv'>{(100*t_tot['OREB']/(t_tot['OREB']+opp_tot['DREB'])) if (t_tot['ORB']+opp_tot['DRB'])>0 else 0:.1f}%</td><td class='td-adv'>{(100*t_tot['DRB']/(t_tot['DRB']+opp_tot['ORB'])) if (t_tot['DRB']+opp_tot['ORB'])>0 else 0:.1f}%</td><td class='td-adv text-gray'>{(100*t_tot['TRB']/(t_tot['TRB']+opp_tot['TRB'])) if (t_tot['TRB']+opp_tot['TRB'])>0 else 0:.1f}%</td><td class='td-adv'>{(100*t_tot['AST']/tm_FGM) if tm_FGM>0 else 0:.1f}%</td><td class='td-adv'>{(100*t_tot['STL']/opp_Poss) if opp_Poss>0 else 0:.1f}%</td><td class='td-adv'>{(100*t_tot['BLK']/opp_tot['2PA']) if opp_tot['2PA']>0 else 0:.1f}%</td><td class='td-adv'>{(100*t_tot['TOV']/(tm_FGA+0.44*t_tot['FTA']+t_tot['TOV'])) if (tm_FGA+0.44*t_tot['FTA']+t_tot['TOV'])>0 else 0:.1f}%</td><td class='td-adv font-bold'>{(t_tot['PTS']/(tm_FGA+0.44*t_tot['FTA']+t_tot['TOV'])) if (tm_FGA+0.44*t_tot['FTA']+t_tot['TOV'])>0 else 0:.2f}</td><td class='td-adv font-bold'>{(t_tot['PTS']/tm_FGA) if tm_FGA>0 else 0:.2f}</td></tr></tbody></table></div>"
+    html_tables += f"<tr class='total-row'><td colspan='5' class='td-info' style='text-align: right; padding-right: 15px;'><b>TEAM AVERAGES</b></td><td class='td-info'><b>{tm_mins:02d}:{tm_secs:02d}</b></td><td class='td-trad font-bold text-blue'>{t_tot['PTS']/team_gp:.1f}</td><td class='td-trad font-bold'>{t_tot['PIR']/team_gp:.1f}</td><td class='td-trad'>{t_tot['OREB']/team_gp:.1f}</td><td class='td-trad'>{t_tot['DREB']/team_gp:.1f}</td><td class='td-trad font-bold'>{t_tot['TRB']/team_gp:.1f}</td><td class='td-trad'>{t_tot['AST']/team_gp:.1f}</td><td class='td-trad text-green'>{t_tot['STL']/team_gp:.1f}</td><td class='td-trad text-red'>{t_tot['TOV']/team_gp:.1f}</td><td class='td-trad'>{t_tot['BLK']/team_gp:.1f}</td><td class='td-trad text-gray'>{t_tot['FD']/team_gp:.1f}</td><td class='td-trad text-gray'>{t_tot['PF']/team_gp:.1f}</td><td class='td-trad'></td><td class='td-shoot font-bold'>{t_tot['2PM']/team_gp:.1f}</td><td class='td-shoot text-gray'>{t_tot['2PA']/team_gp:.1f}</td><td class='td-shoot'>{(t_tot['2PM']/t_tot['2PA']*100) if t_tot['2PA']>0 else 0:.0f}%</td><td class='td-shoot font-bold'>{t_tot['3PM']/team_gp:.1f}</td><td class='td-shoot text-gray'>{t_tot['3PA']/team_gp:.1f}</td><td class='td-shoot'>{(t_tot['3PM']/t_tot['3PA']*100) if t_tot['3PA']>0 else 0:.0f}%</td><td class='td-shoot font-bold'>{t_tot['FTM']/team_gp:.1f}</td><td class='td-shoot text-gray'>{t_tot['FTA']/team_gp:.1f}</td><td class='td-shoot'>{(t_tot['FTM']/t_tot['FTA']*100) if t_tot['FTA']>0 else 0:.0f}%</td><td class='td-adv font-bold'>{tot_gmsc/team_gp:.1f}</td><td class='td-adv'>{(t_tot['PTS']/tm_ts_denom*100) if tm_ts_denom>0 else 0:.1f}%</td><td class='td-adv'>{((tm_FGM + 0.5 * t_tot['3PM'])/tm_FGA*100) if tm_FGA>0 else 0:.1f}%</td><td class='td-adv text-gray'>{(t_tot['3PA']/tm_FGA*100) if tm_FGA>0 else 0:.1f}%</td><td class='td-adv text-gray'>{(t_tot['FTA']/tm_FGA*100) if tm_FGA>0 else 0:.1f}%</td><td class='td-adv font-bold text-blue'>100.0%</td><td class='td-adv'>{(100*t_tot['OREB']/(t_tot['OREB']+opp_tot['DREB'])) if (t_tot['OREB']+opp_tot['DREB'])>0 else 0:.1f}%</td><td class='td-adv'>{(100*t_tot['DRB']/(t_tot['DRB']+opp_tot['ORB'])) if (t_tot['DRB']+opp_tot['ORB'])>0 else 0:.1f}%</td><td class='td-adv text-gray'>{(100*t_tot['TRB']/(t_tot['TRB']+opp_tot['TRB'])) if (t_tot['TRB']+opp_tot['TRB'])>0 else 0:.1f}%</td><td class='td-adv'>{(100*t_tot['AST']/tm_FGM) if tm_FGM>0 else 0:.1f}%</td><td class='td-adv'>{(100*t_tot['STL']/opp_Poss) if opp_Poss>0 else 0:.1f}%</td><td class='td-adv'>{(100*t_tot['BLK']/opp_tot['2PA']) if opp_tot['2PA']>0 else 0:.1f}%</td><td class='td-adv'>{(100*t_tot['TOV']/(tm_FGA+0.44*t_tot['FTA']+t_tot['TOV'])) if (tm_FGA+0.44*t_tot['FTA']+t_tot['TOV'])>0 else 0:.1f}%</td><td class='td-adv font-bold'>{(t_tot['PTS']/(tm_FGA+0.44*t_tot['FTA']+t_tot['TOV'])) if (tm_FGA+0.44*t_tot['FTA']+t_tot['TOV'])>0 else 0:.2f}</td><td class='td-adv font-bold'>{(t_tot['PTS']/tm_FGA) if tm_FGA>0 else 0:.2f}</td></tr></tbody></table></div>"
 
     html = f"""<!DOCTYPE html><html><head><meta charset="utf-8"><title>Aggregated Boxscore: {eq_objetivo}</title>
     <style>
@@ -1287,8 +1274,6 @@ def splits_api(s_rnd: int = 1, e_rnd: int = 22, eq: str = "MOVISTAR ESTUDIANTES"
 # === MÓDULO 14 ===
 @app.get("/contextual", response_class=HTMLResponse)
 def generar_contextual(eq: str = "MOVISTAR ESTUDIANTES", venue: str = "ALL", n_games: int = 3, m_filt: int = 10, tipo_reporte: str = "quintetos"):
-    
-    # 1. Rollback a la lógica de calendario original que funcionaba perfectamente
     if not os.path.exists(FILE_CALENDAR):
         construir_calendario_maestro()
         
@@ -1363,31 +1348,102 @@ def generar_contextual(eq: str = "MOVISTAR ESTUDIANTES", venue: str = "ALL", n_g
         return HTMLResponse(content=html_content, status_code=200)
 
     else:
-        # 2. Vuelta a la iteración sobre los archivos sueltos originales, 
-        # pero conservando el matching robusto y la limpieza segura de datos.
-        list_box_df = []
-        for mid in match_ids:
-            box_path = os.path.join(DATA_DIR, f"boxscore_{mid}.csv")
-            if not os.path.exists(box_path):
-                extraer_partido_api(mid)
-            if os.path.exists(box_path):
-                df_b_clean = limpiar_boxscore_api_m14(mid)
-                
-                box_teams = df_b_clean['Team'].dropna().unique().tolist()
-                if box_teams:
-                    actual_team_name = match_team_name(eq, box_teams)
-                    is_target = df_b_clean['Team'] == actual_team_name
-                else:
-                    is_target = pd.Series(False, index=df_b_clean.index)
-                    
-                df_b_clean.loc[~is_target, 'Team'] = "OPPONENTS"
-                df_b_clean.loc[is_target, 'Team'] = eq
-                list_box_df.append(df_b_clean)
-                
-        if not list_box_df: 
-            raise HTTPException(status_code=404, detail="No se pudieron procesar los boxscores de esos partidos. (Revisa si los archivos boxscore existen en el repositorio o la API los bloqueó).")
+        # === NUEVA LÓGICA ROBUSTA PARA BOXSCORE AGREGADO MAESTRO ===
+        FILE_MASTER_BOXSCORE = os.path.join(DATA_DIR, "BOXSCORE_PRIMERAFEB_2526.csv")
+        
+        if not os.path.exists(FILE_MASTER_BOXSCORE):
+            raise HTTPException(status_code=404, detail="Archivo maestro BOXSCORE_PRIMERAFEB_2526.csv no encontrado en el servidor.")
             
-        df_all_box = pd.concat(list_box_df, ignore_index=True)
+        df_master_box = pd.read_csv(FILE_MASTER_BOXSCORE)
+        
+        # Filtro seguro por las jornadas válidas calculadas en el bloque superior
+        col_master_round = 'ROUND' if 'ROUND' in df_master_box.columns else ('jornada' if 'jornada' in df_master_box.columns else None)
+        
+        if col_master_round:
+            df_master_box[col_master_round] = pd.to_numeric(df_master_box[col_master_round], errors='coerce')
+            df_filtered = df_master_box[df_master_box[col_master_round].isin(jornadas_validas)].copy()
+        else:
+            col_master_match = 'MATCHID' if 'MATCHID' in df_master_box.columns else ('match_id' if 'match_id' in df_master_box.columns else None)
+            if col_master_match:
+                df_filtered = df_master_box[df_master_box[col_master_match].astype(str).isin(match_ids)].copy()
+            else:
+                df_filtered = df_master_box.copy()
+                
+        if df_filtered.empty:
+            raise HTTPException(status_code=404, detail="No se encontraron datos en el Boxscore Maestro para los partidos seleccionados.")
+            
+        # Diccionario de Mapeo del Boxscore Maestro al formato del Reporte
+        mapeo = {
+            'TEAM': 'Team', 'team_name': 'Team',
+            'IS_STARTER': 'Starter', 'inn': 'Starter',
+            'PLAYER': 'Player', 'name': 'Player', 'PLAYER_NAME': 'Player',
+            'MIN_SECS': 'Min_Sec_Num', 'minFormatted': 'Min',
+            'PTS': 'PTS', 'pts': 'PTS',
+            'PIR': 'PIR', 'val': 'PIR',
+            'FGM_2': '2PM', 'p2m': '2PM',
+            'FGA_2': '2PA', 'p2a': '2PA',
+            'FGM_3': '3PM', 'p3m': '3PM',
+            'FGA_3': '3PA', 'p3a': '3PA',
+            'FTM': 'FTM', 'p1m': 'FTM',
+            'FTA': 'FTA', 'p1a': 'FTA',
+            'ORB': 'OREB', 'ro': 'OREB',
+            'DRB': 'DREB', 'rd': 'DREB',
+            'TRB': 'TREB', 'rt': 'TREB',
+            'AST': 'AST', 'assist': 'AST',
+            'STL': 'STL', 'st': 'STL',
+            'TOV': 'TOV', 'to': 'TOV',
+            'BLK': 'BLK', 'bs': 'BLK',
+            'PFD': 'FD', 'rf': 'FD',
+            'PF': 'PF', 'pf': 'PF',
+            'PLUS_MINUS': '+/-', 'pllss': '+/-',
+            'PLAYER_ID': 'Player_ID', 'id': 'Player_ID'
+        }
+        
+        rename_dict = {col: mapeo[col] for col in df_filtered.columns if col in mapeo}
+        df_b_clean = df_filtered.rename(columns=rename_dict)
+        
+        # Eliminamos columnas duplicadas tras el renombramiento
+        df_b_clean = df_b_clean.loc[:,~df_b_clean.columns.duplicated()].copy()
+        
+        # Limpieza estricta y casteos
+        if 'Starter' in df_b_clean.columns:
+            df_b_clean['Starter'] = pd.to_numeric(df_b_clean['Starter'], errors='coerce').fillna(0).astype(int)
+        else:
+            df_b_clean['Starter'] = 0
+            
+        if '+/-' in df_b_clean.columns:
+            df_b_clean['+/-'] = df_b_clean['+/-'].astype(str).str.replace('+', '', regex=False)
+            df_b_clean['+/-'] = pd.to_numeric(df_b_clean['+/-'], errors='coerce').fillna(0)
+        else:
+            df_b_clean['+/-'] = 0
+            
+        if 'Min_Sec_Num' not in df_b_clean.columns:
+            if 'Min' in df_b_clean.columns:
+                df_b_clean['Min_Sec_Num'] = df_b_clean['Min'].apply(parse_min)
+            else:
+                df_b_clean['Min_Sec_Num'] = 0
+        else:
+            df_b_clean['Min_Sec_Num'] = pd.to_numeric(df_b_clean['Min_Sec_Num'], errors='coerce').fillna(0)
+            
+        if 'Player' in df_b_clean.columns:
+            df_b_clean['Player'] = df_b_clean['Player'].apply(formatear_nombre_jugador)
+            
+        if 'Logo_URL' not in df_b_clean.columns:
+            df_b_clean['Logo_URL'] = "https://via.placeholder.com/40/cbd5e0/ffffff?text=+"
+            
+        # Asignar Equipo vs Oponentes con matching seguro (M12)
+        box_teams = df_b_clean['Team'].dropna().unique().tolist()
+        if box_teams:
+            actual_team_name = match_team_name(eq, box_teams)
+            is_target = df_b_clean['Team'] == actual_team_name
+        else:
+            is_target = pd.Series(False, index=df_b_clean.index)
+            
+        df_b_clean.loc[~is_target, 'Team'] = "OPPONENTS"
+        df_b_clean.loc[is_target, 'Team'] = eq
+        
+        df_all_box = df_b_clean
+        
         html_content = HTML_BOXSCORE_AGREGADO_M14(df_all_box, eq, context_str, len(jornadas_validas))
         
         eq_f = eq.replace(" ", "_")
