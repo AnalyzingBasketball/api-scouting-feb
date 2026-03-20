@@ -957,17 +957,6 @@ def create_signatures_m14(row):
     real_sig = "-".join(players)
     return pd.Series([arch_sig, real_sig])
 
-def limpiar_boxscore_api_m14(match_id):
-    df_box = pd.read_csv(os.path.join(DATA_DIR, f"boxscore_{match_id}.csv"))
-    mapeo = {'team_name': 'Team', 'no': 'No', 'inn': 'Starter', 'name': 'Player', 'minFormatted': 'Min', 'pts': 'PTS',
-             'p2m': '2PM', 'p2a': '2PA', 'p3m': '3PM', 'p3a': '3PA', 'fgm': 'FGM', 'fga': 'FGA',
-             'p1m': 'FTM', 'p1a': 'FTA', 'ro': 'OREB', 'rd': 'DREB', 'rt': 'TREB', 'assist': 'AST', 'to': 'TOV', 'st': 'STL',
-             'bs': 'BLK', 'tc': 'BLKA', 'mt': 'DNK', 'pf': 'PF', 'rf': 'FD', 'pllss': '+/-', 'val': 'PIR', 'id': 'Player_ID', 'logo': 'Logo_URL'}
-    df_clean = df_box[[c for c in mapeo.keys() if c in df_box.columns]].rename(columns=mapeo)
-    df_clean['Min_Sec_Num'] = df_clean['Min'].apply(parse_min)
-    if 'Player' in df_clean.columns: df_clean['Player'] = df_clean['Player'].apply(formatear_nombre_jugador)
-    return df_clean
-
 def HTML_LINEUPS_AGREGADOS_M14(efficiency, eq, context_str, m_filt):
     def render_table(df_subset):
         t_html = f"""<div class='table-container'><table><thead><tr>
@@ -1348,7 +1337,7 @@ def generar_contextual(eq: str = "MOVISTAR ESTUDIANTES", venue: str = "ALL", n_g
         return HTMLResponse(content=html_content, status_code=200)
 
     else:
-        # === NUEVA LÓGICA ROBUSTA PARA BOXSCORE AGREGADO MAESTRO ===
+        # === LÓGICA FINAL: USO DEL BOXSCORE MAESTRO ===
         FILE_MASTER_BOXSCORE = os.path.join(DATA_DIR, "BOXSCORE_PRIMERAFEB_2526.csv")
         
         if not os.path.exists(FILE_MASTER_BOXSCORE):
@@ -1356,23 +1345,18 @@ def generar_contextual(eq: str = "MOVISTAR ESTUDIANTES", venue: str = "ALL", n_g
             
         df_master_box = pd.read_csv(FILE_MASTER_BOXSCORE)
         
-        # Filtro seguro por las jornadas válidas calculadas en el bloque superior
-        col_master_round = 'ROUND' if 'ROUND' in df_master_box.columns else ('jornada' if 'jornada' in df_master_box.columns else None)
+        # Filtrar EXCLUSIVAMENTE los partidos de este equipo usando MATCHID
+        col_master_match = 'MATCHID' if 'MATCHID' in df_master_box.columns else ('match_id' if 'match_id' in df_master_box.columns else 'MATCH_ID')
         
-        if col_master_round:
-            df_master_box[col_master_round] = pd.to_numeric(df_master_box[col_master_round], errors='coerce')
-            df_filtered = df_master_box[df_master_box[col_master_round].isin(jornadas_validas)].copy()
+        if col_master_match in df_master_box.columns:
+            df_filtered = df_master_box[df_master_box[col_master_match].astype(str).isin(match_ids)].copy()
         else:
-            col_master_match = 'MATCHID' if 'MATCHID' in df_master_box.columns else ('match_id' if 'match_id' in df_master_box.columns else None)
-            if col_master_match:
-                df_filtered = df_master_box[df_master_box[col_master_match].astype(str).isin(match_ids)].copy()
-            else:
-                df_filtered = df_master_box.copy()
-                
+            raise HTTPException(status_code=500, detail="El Boxscore Maestro no tiene columna MATCHID para filtrar.")
+            
         if df_filtered.empty:
             raise HTTPException(status_code=404, detail="No se encontraron datos en el Boxscore Maestro para los partidos seleccionados.")
             
-        # Diccionario de Mapeo del Boxscore Maestro al formato del Reporte
+        # Diccionario de Mapeo
         mapeo = {
             'TEAM': 'Team', 'team_name': 'Team',
             'IS_STARTER': 'Starter', 'inn': 'Starter',
@@ -1399,13 +1383,18 @@ def generar_contextual(eq: str = "MOVISTAR ESTUDIANTES", venue: str = "ALL", n_g
             'PLAYER_ID': 'Player_ID', 'id': 'Player_ID'
         }
         
-        rename_dict = {col: mapeo[col] for col in df_filtered.columns if col in mapeo}
+        rename_dict = {}
+        for col in df_filtered.columns:
+            for k, v in mapeo.items():
+                if col.lower() == k.lower():
+                    rename_dict[col] = v
+                    break
         df_b_clean = df_filtered.rename(columns=rename_dict)
         
-        # Eliminamos columnas duplicadas tras el renombramiento
+        # Eliminar columnas duplicadas si las hay
         df_b_clean = df_b_clean.loc[:,~df_b_clean.columns.duplicated()].copy()
         
-        # Limpieza estricta y casteos
+        # Limpiezas y casteos
         if 'Starter' in df_b_clean.columns:
             df_b_clean['Starter'] = pd.to_numeric(df_b_clean['Starter'], errors='coerce').fillna(0).astype(int)
         else:
@@ -1431,7 +1420,7 @@ def generar_contextual(eq: str = "MOVISTAR ESTUDIANTES", venue: str = "ALL", n_g
         if 'Logo_URL' not in df_b_clean.columns:
             df_b_clean['Logo_URL'] = "https://via.placeholder.com/40/cbd5e0/ffffff?text=+"
             
-        # Asignar Equipo vs Oponentes con matching seguro (M12)
+        # Asignar Equipo vs Oponentes
         box_teams = df_b_clean['Team'].dropna().unique().tolist()
         if box_teams:
             actual_team_name = match_team_name(eq, box_teams)
@@ -1450,6 +1439,7 @@ def generar_contextual(eq: str = "MOVISTAR ESTUDIANTES", venue: str = "ALL", n_g
         out_name = f"CONTEXT_BOXSCORE_{eq_f}_{len(jornadas_validas)}_{venue}.html"
         ruta_final = os.path.join(REPORTS_DIR, out_name)
         with open(ruta_final, "w", encoding="utf-8") as f: f.write(html_content)
+        
         return HTMLResponse(content=html_content, status_code=200)
 
 # ==============================================================================
