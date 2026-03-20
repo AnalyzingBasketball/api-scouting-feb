@@ -965,11 +965,16 @@ def limpiar_boxscore_api_m14(match_id):
              'bs': 'BLK', 'tc': 'BLKA', 'mt': 'DNK', 'pf': 'PF', 'rf': 'FD', 'pllss': '+/-', 'val': 'PIR', 'id': 'Player_ID', 'logo': 'Logo_URL'}
     df_clean = df_box[[c for c in mapeo.keys() if c in df_box.columns]].rename(columns=mapeo)
     
-    # FIX APLICADO: Aseguramos el correcto casteo numérico/booleano para poder sumarlo posteriormente (GS)
+    # [FIX] Casteo seguro de titulares (boolean/string a int)
     if 'Starter' in df_clean.columns:
         df_clean['Starter'] = df_clean['Starter'].astype(str).str.strip().str.lower().apply(lambda x: 1 if x in ['1', 'true', 'yes', '*'] else 0)
     else:
         df_clean['Starter'] = 0
+        
+    # [FIX] Limpieza de caracteres en el Plus/Minus antes del casteo numérico
+    if '+/-' in df_clean.columns:
+        df_clean['+/-'] = df_clean['+/-'].astype(str).str.replace('+', '', regex=False)
+        df_clean['+/-'] = pd.to_numeric(df_clean['+/-'], errors='coerce').fillna(0)
         
     if 'Min' not in df_clean.columns:
         df_clean['Min'] = df_box.get('min', "00:00")
@@ -1176,8 +1181,7 @@ def HTML_BOXSCORE_AGREGADO_M14(df_all_box, eq_objetivo, context_str, team_games_
     tm_mins_pg = (t_tot['Min_Sec_Num'] / team_gp) / 5
     tm_mins, tm_secs = divmod(int(tm_mins_pg), 60); tm_ts_denom = 2 * (tm_FGA + 0.44 * t_tot['FTA'])
     
-    # FIX APLICADO: Corrección de referencias t_tot['3PM'] y t_tot['3PA'] en lugar de FGM3 y FGA3
-    html_tables += f"<tr class='total-row'><td colspan='5' class='td-info' style='text-align: right; padding-right: 15px;'><b>TEAM AVERAGES</b></td><td class='td-info'><b>{tm_mins:02d}:{tm_secs:02d}</b></td><td class='td-trad font-bold text-blue'>{t_tot['PTS']/team_gp:.1f}</td><td class='td-trad font-bold'>{t_tot['PIR']/team_gp:.1f}</td><td class='td-trad'>{t_tot['OREB']/team_gp:.1f}</td><td class='td-trad'>{t_tot['DREB']/team_gp:.1f}</td><td class='td-trad font-bold'>{t_tot['TREB']/team_gp:.1f}</td><td class='td-trad'>{t_tot['AST']/team_gp:.1f}</td><td class='td-trad text-green'>{t_tot['STL']/team_gp:.1f}</td><td class='td-trad text-red'>{t_tot['TOV']/team_gp:.1f}</td><td class='td-trad'>{t_tot['BLK']/team_gp:.1f}</td><td class='td-trad text-gray'>{t_tot['FD']/team_gp:.1f}</td><td class='td-trad text-gray'>{t_tot['PF']/team_gp:.1f}</td><td class='td-trad'></td><td class='td-shoot font-bold'>{t_tot['2PM']/team_gp:.1f}</td><td class='td-shoot text-gray'>{t_tot['2PA']/team_gp:.1f}</td><td class='td-shoot'>{(t_tot['2PM']/t_tot['2PA']*100) if t_tot['2PA']>0 else 0:.0f}%</td><td class='td-shoot font-bold'>{t_tot['3PM']/team_gp:.1f}</td><td class='td-shoot text-gray'>{t_tot['3PA']/team_gp:.1f}</td><td class='td-shoot'>{(t_tot['3PM']/t_tot['3PA']*100) if t_tot['3PA']>0 else 0:.0f}%</td><td class='td-shoot font-bold'>{t_tot['FTM']/team_gp:.1f}</td><td class='td-shoot text-gray'>{t_tot['FTA']/team_gp:.1f}</td><td class='td-shoot'>{(t_tot['FTM']/t_tot['FTA']*100) if t_tot['FTA']>0 else 0:.0f}%</td><td class='td-adv font-bold'>{tot_gmsc/team_gp:.1f}</td><td class='td-adv'>{(t_tot['PTS']/tm_ts_denom*100) if tm_ts_denom>0 else 0:.1f}%</td><td class='td-adv'>{((tm_FGM + 0.5 * t_tot['3PM'])/tm_FGA*100) if tm_FGA>0 else 0:.1f}%</td><td class='td-adv text-gray'>{(t_tot['3PA']/tm_FGA*100) if tm_FGA>0 else 0:.1f}%</td><td class='td-adv text-gray'>{(t_tot['FTA']/tm_FGA*100) if tm_FGA>0 else 0:.1f}%</td><td class='td-adv font-bold text-blue'>100.0%</td><td class='td-adv'>{(100*t_tot['ORB']/(t_tot['ORB']+opp_tot['DRB'])) if (t_tot['ORB']+opp_tot['DRB'])>0 else 0:.1f}%</td><td class='td-adv'>{(100*t_tot['DRB']/(t_tot['DRB']+opp_tot['ORB'])) if (t_tot['DRB']+opp_tot['ORB'])>0 else 0:.1f}%</td><td class='td-adv text-gray'>{(100*t_tot['TRB']/(t_tot['TRB']+opp_tot['TRB'])) if (t_tot['TRB']+opp_tot['TRB'])>0 else 0:.1f}%</td><td class='td-adv'>{(100*t_tot['AST']/tm_FGM) if tm_FGM>0 else 0:.1f}%</td><td class='td-adv'>{(100*t_tot['STL']/opp_Poss) if opp_Poss>0 else 0:.1f}%</td><td class='td-adv'>{(100*t_tot['BLK']/opp_tot['2PA']) if opp_tot['2PA']>0 else 0:.1f}%</td><td class='td-adv'>{(100*t_tot['TOV']/(tm_FGA+0.44*t_tot['FTA']+t_tot['TOV'])) if (tm_FGA+0.44*t_tot['FTA']+t_tot['TOV'])>0 else 0:.1f}%</td><td class='td-adv font-bold'>{(t_tot['PTS']/(tm_FGA+0.44*t_tot['FTA']+t_tot['TOV'])) if (tm_FGA+0.44*t_tot['FTA']+t_tot['TOV'])>0 else 0:.2f}</td><td class='td-adv font-bold'>{(t_tot['PTS']/tm_FGA) if tm_FGA>0 else 0:.2f}</td></tr></tbody></table></div>"
+    html_tables += f"<tr class='total-row'><td colspan='5' class='td-info' style='text-align: right; padding-right: 15px;'><b>TEAM AVERAGES</b></td><td class='td-info'><b>{tm_mins:02d}:{tm_secs:02d}</b></td><td class='td-trad font-bold text-blue'>{t_tot['PTS']/team_gp:.1f}</td><td class='td-trad font-bold'>{t_tot['PIR']/team_gp:.1f}</td><td class='td-trad'>{t_tot['OREB']/team_gp:.1f}</td><td class='td-trad'>{t_tot['DREB']/team_gp:.1f}</td><td class='td-trad font-bold'>{t_tot['TREB']/team_gp:.1f}</td><td class='td-trad'>{t_tot['AST']/team_gp:.1f}</td><td class='td-trad text-green'>{t_tot['STL']/team_gp:.1f}</td><td class='td-trad text-red'>{t_tot['TOV']/team_gp:.1f}</td><td class='td-trad'>{t_tot['BLK']/team_gp:.1f}</td><td class='td-trad text-gray'>{t_tot['FD']/team_gp:.1f}</td><td class='td-trad text-gray'>{t_tot['PF']/team_gp:.1f}</td><td class='td-trad'></td><td class='td-shoot font-bold'>{t_tot['2PM']/team_gp:.1f}</td><td class='td-shoot text-gray'>{t_tot['2PA']/team_gp:.1f}</td><td class='td-shoot'>{(t_tot['2PM']/t_tot['2PA']*100) if t_tot['2PA']>0 else 0:.0f}%</td><td class='td-shoot font-bold'>{t_tot['3PM']/team_gp:.1f}</td><td class='td-shoot text-gray'>{t_tot['3PA']/team_gp:.1f}</td><td class='td-shoot'>{(t_tot['3PM']/t_tot['3PA']*100) if t_tot['3PA']>0 else 0:.0f}%</td><td class='td-shoot font-bold'>{t_tot['FTM']/team_gp:.1f}</td><td class='td-shoot text-gray'>{t_tot['FTA']/team_gp:.1f}</td><td class='td-shoot'>{(t_tot['FTM']/t_tot['FTA']*100) if t_tot['FTA']>0 else 0:.0f}%</td><td class='td-adv font-bold'>{tot_gmsc/team_gp:.1f}</td><td class='td-adv'>{(t_tot['PTS']/tm_ts_denom*100) if tm_ts_denom>0 else 0:.1f}%</td><td class='td-adv'>{((tm_FGM + 0.5 * t_tot['3PM'])/tm_FGA*100) if tm_FGA>0 else 0:.1f}%</td><td class='td-adv text-gray'>{(t_tot['3PA']/tm_FGA*100) if tm_FGA>0 else 0:.1f}%</td><td class='td-adv text-gray'>{(t_tot['FTA']/tm_FGA*100) if tm_FGA>0 else 0:.1f}%</td><td class='td-adv font-bold text-blue'>100.0%</td><td class='td-adv'>{(100*t_tot['OREB']/(t_tot['OREB']+opp_tot['DREB'])) if (t_tot['OREB']+opp_tot['DREB'])>0 else 0:.1f}%</td><td class='td-adv'>{(100*t_tot['DREB']/(t_tot['DREB']+opp_tot['OREB'])) if (t_tot['DREB']+opp_tot['OREB'])>0 else 0:.1f}%</td><td class='td-adv text-gray'>{(100*t_tot['TRB']/(t_tot['TRB']+opp_tot['TRB'])) if (t_tot['TRB']+opp_tot['TRB'])>0 else 0:.1f}%</td><td class='td-adv'>{(100*t_tot['AST']/tm_FGM) if tm_FGM>0 else 0:.1f}%</td><td class='td-adv'>{(100*t_tot['STL']/opp_Poss) if opp_Poss>0 else 0:.1f}%</td><td class='td-adv'>{(100*t_tot['BLK']/opp_tot['2PA']) if opp_tot['2PA']>0 else 0:.1f}%</td><td class='td-adv'>{(100*t_tot['TOV']/(tm_FGA+0.44*t_tot['FTA']+t_tot['TOV'])) if (tm_FGA+0.44*t_tot['FTA']+t_tot['TOV'])>0 else 0:.1f}%</td><td class='td-adv font-bold'>{(t_tot['PTS']/(tm_FGA+0.44*t_tot['FTA']+t_tot['TOV'])) if (tm_FGA+0.44*t_tot['FTA']+t_tot['TOV'])>0 else 0:.2f}</td><td class='td-adv font-bold'>{(t_tot['PTS']/tm_FGA) if tm_FGA>0 else 0:.2f}</td></tr></tbody></table></div>"
 
     html = f"""<!DOCTYPE html><html><head><meta charset="utf-8"><title>Aggregated Boxscore: {eq_objetivo}</title>
     <style>
@@ -1367,7 +1371,15 @@ def generar_contextual(eq: str = "MOVISTAR ESTUDIANTES", venue: str = "ALL", n_g
                 extraer_partido_api(mid)
             if os.path.exists(box_path):
                 df_b_clean = limpiar_boxscore_api_m14(mid)
-                is_target = df_b_clean['Team'].apply(lambda x: eq_clean in clear_string(str(x)).replace(" ", ""))
+                
+                # [FIX] Igualamos el robusto matching de strings que hace el Módulo 12
+                box_teams = df_b_clean['Team'].dropna().unique().tolist()
+                if box_teams:
+                    actual_team_name = match_team_name(eq, box_teams)
+                    is_target = df_b_clean['Team'] == actual_team_name
+                else:
+                    is_target = pd.Series(False, index=df_b_clean.index)
+                    
                 df_b_clean.loc[~is_target, 'Team'] = "OPPONENTS"
                 df_b_clean.loc[is_target, 'Team'] = eq
                 list_box_df.append(df_b_clean)
