@@ -1537,6 +1537,309 @@ def generar_contextual(eq: str = "MOVISTAR ESTUDIANTES", venue: str = "ALL", n_g
 
         return HTMLResponse(content=html_content, status_code=200)
 
+# ==============================================================================
+# MÓDULO 16: MEGA-INFORME LIGA COMPLETA (TODOS LOS EQUIPOS, TODA LA TEMPORADA)
+# ==============================================================================
+
+def generar_html_liga_lineups(m_filt: int = 15):
+    """Genera el informe completo de quintetos para los 18 equipos (toda la temporada)."""
+
+    if not os.path.exists(FILE_LINEUPS):
+        raise HTTPException(status_code=404, detail="Archivo LINEUPS maestro no encontrado en el servidor.")
+
+    # Reutilizamos la infraestructura de M13 (mismos diccionarios y funciones)
+    cargar_datos_m13()
+
+    df_lineups = pd.read_csv(FILE_LINEUPS)
+    df_lineups['TEAM'] = df_lineups.get('TEAM', pd.Series()).replace({
+        'CLUB OURENSE BALONCESTO': 'CLOUD.GAL OURENSE BALONCESTO',
+        'OURENSE BALONCESTO': 'CLOUD.GAL OURENSE BALONCESTO'
+    })
+
+    for col in ['P1_ID', 'P2_ID', 'P3_ID', 'P4_ID', 'P5_ID']:
+        if col not in df_lineups.columns:
+            df_lineups[col] = ""
+        else:
+            df_lineups[col] = df_lineups[col].apply(safe_id)
+
+    # Crear firmas de quinteto (reutiliza create_signatures_m13)
+    df_lineups[['ARCHETYPE', 'REAL_LINEUP']] = df_lineups.apply(create_signatures_m13, axis=1)
+    df_valid = df_lineups[df_lineups['ARCHETYPE'] != "Incomplete"].copy()
+
+    if df_valid.empty:
+        raise HTTPException(status_code=404, detail="No hay datos de quintetos válidos en el archivo LINEUPS.")
+
+    # Logos e imágenes en base64
+    logo_empresa_b64 = get_image_base64(LOGO_EMPRESA)
+    logo_feb_b64     = get_image_base64(LOGO_FEB)
+    logo_liga_b64    = get_image_base64(LOGO_LIGA)
+
+    # --------------------------------------------------------------------------
+    # Función de ordenación clásica PG→SG→SF→PF→C (reutiliza lógica de M14)
+    # --------------------------------------------------------------------------
+    def get_order(pid):
+        p_data  = custom_photos_m13.get(str(pid), {})
+        pos_raw = p_data.get("POSITION", map_pos_m13.get(str(pid), ""))
+        order   = p_data.get("POS_ORDER")
+        if pd.notna(order) and str(order).strip() != "":
+            try: return float(order)
+            except: pass
+        if pd.isna(pos_raw) or str(pos_raw).strip() == "": return 6
+        pos_up = str(pos_raw).strip().upper()
+        if 'PG' in pos_up or 'BASE'    in pos_up: return 1
+        if 'SG' in pos_up or 'ESCOLTA' in pos_up: return 2
+        if 'SF' in pos_up or 'ALERO'   in pos_up: return 3
+        if 'PF' in pos_up or 'ALA'     in pos_up: return 4
+        if 'C'  in pos_up or 'PIV'     in pos_up: return 5
+        return 6
+
+    # --------------------------------------------------------------------------
+    # Render de una tabla (top o bottom) — mismo diseño que M16 original
+    # --------------------------------------------------------------------------
+    def render_table_m16(df_subset):
+        t_html = """<div class='table-container'><table><thead><tr>
+            <th class='col-lineup'></th>
+            <th>TOTAL MIN</th><th>PTS /40</th><th>PA /40</th><th>NET RTG /40</th>
+            <th class='bg-ts'>TS% *</th><th class='bg-ts'>eFG% *</th><th class='bg-ts'>TOV% *</th>
+            <th class='bg-ts'>ORB% *</th><th class='bg-ts'>FTr *</th><th class='bg-ts'>USG% *</th>
+            </tr></thead><tbody>"""
+
+        for _, row in df_subset.iterrows():
+            pm_val      = row['NET_RATING']
+            color_class = "text-green" if pm_val > 0 else ("text-red" if pm_val < 0 else "")
+            sign        = "+" if pm_val > 0 else ""
+            p_ids       = row['REAL_LINEUP'].split("-")
+            p_ids.sort(key=get_order)
+
+            cards_html = ""
+            avg_efg = avg_ts = avg_tov = avg_orb = avg_ftr = avg_usg = count = 0
+
+            for pid in p_ids:
+                p_data     = custom_photos_m13.get(pid, {})
+                name_short = get_short_name(p_data.get("PLAYER_NAME", map_name_m13.get(pid, "Unknown")))
+                pos        = p_data.get("POSITION", map_pos_m13.get(pid, "N/A"))
+                if pd.isna(pos) or str(pos).strip() == "": pos = "N/A"
+                role       = map_role_m13.get(pid, "Unknown")
+                foto_url   = p_data.get("PHOTO_URL", f"https://imagenes.feb.es/Foto.aspx?c={pid}")
+
+                cards_html += (
+                    f"<div class='player-card'>"
+                    f"<span class='player-role-label'>{role}</span>"
+                    f"<img src='{foto_url}' onerror=\"this.src='https://via.placeholder.com/50/cbd5e0/ffffff?text=+'\">"
+                    f"<br>{name_short}<br>"
+                    f"<span class='player-pos'>{pos}</span>"
+                    f"</div>"
+                )
+
+                if pid in map_efg_m13:
+                    avg_efg += map_efg_m13.get(pid, 0)
+                    avg_ts  += map_ts_m13.get(pid, 0)
+                    avg_tov += map_tov_m13.get(pid, 0)
+                    avg_orb += map_orb_m13.get(pid, 0)
+                    avg_ftr += map_ftr_m13.get(pid, 0)
+                    avg_usg += map_usg_m13.get(pid, 0)
+                    count   += 1
+
+            f_ts  = f"{(avg_ts /count):.1f}%" if count > 0 else "N/A"
+            f_efg = f"{(avg_efg/count):.1f}%" if count > 0 else "N/A"
+            f_tov = f"{(avg_tov/count):.1f}%" if count > 0 else "N/A"
+            f_orb = f"{(avg_orb/count):.1f}%" if count > 0 else "N/A"
+            f_ftr = f"{(avg_ftr/count):.3f}"   if count > 0 else "N/A"
+            f_usg = f"{(avg_usg/count):.1f}%" if count > 0 else "N/A"
+
+            t_html += (
+                f"<tr>"
+                f"<td class='col-lineup'><div class='players-flex'>{cards_html}</div></td>"
+                f"<td class='metric-adv'>{row['MINUTES']:.1f}</td>"
+                f"<td class='metric-adv text-blue'>{row['PTS_40']:.1f}</td>"
+                f"<td class='metric-adv text-red'>{row['PA_40']:.1f}</td>"
+                f"<td class='metric-huge {color_class}'>{sign}{pm_val}</td>"
+                f"<td class='metric-adv' style='color:#B22222'>{f_ts}</td>"
+                f"<td class='metric-adv'>{f_efg}</td>"
+                f"<td class='metric-adv'>{f_tov}</td>"
+                f"<td class='metric-adv'>{f_orb}</td>"
+                f"<td class='metric-adv'>{f_ftr}</td>"
+                f"<td class='metric-adv'>{f_usg}</td>"
+                f"</tr>"
+            )
+
+        t_html += "</tbody></table></div>"
+        return t_html
+
+    # --------------------------------------------------------------------------
+    # Cabecera HTML
+    # --------------------------------------------------------------------------
+    html_content = f"""<!DOCTYPE html><html><head>
+    <meta charset="utf-8">
+    <title>Advanced Positional Scouting: Lineups — Primera FEB 25/26</title>
+    <style>
+        @page {{ size: landscape; margin: 10mm 15mm 20mm 15mm; }}
+        body {{ font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background: #f4f6f9; color: #1a202c; margin: 0; padding: 20px; padding-bottom: 70px; }}
+
+        /* CABECERA */
+        .top-banner {{ background: #fff; padding: 20px 30px; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); margin-bottom: 20px; }}
+        .top-logos {{ display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid #e2e8f0; padding-bottom: 15px; margin-bottom: 15px; }}
+        .logo-side {{ height: 60px; max-width: 130px; object-fit: contain; }}
+        .logo-center {{ height: 90px; max-width: 250px; object-fit: contain; }}
+        .header-title-block {{ text-align: center; }}
+        h1 {{ margin: 0; font-size: 28px; color: #1a202c; text-transform: uppercase; font-weight: 900; letter-spacing: 1px; }}
+        .subtitle {{ color: #718096; font-size: 15px; margin-top: 5px; font-weight: bold; text-transform: uppercase; }}
+
+        /* LEYENDA */
+        .legend-grid {{ display: grid; grid-template-columns: repeat(4, 1fr); gap: 15px; background: #fff; padding: 15px 25px; border-radius: 8px; border: 1px solid #e2e8f0; margin-bottom: 30px; box-shadow: 0 2px 4px rgba(0,0,0,0.05); }}
+        .legend-item {{ font-size: 11px; color: #4a5568; line-height: 1.5; text-align: left; }}
+        .legend-item b {{ color: #2d3748; font-weight: 800; }}
+
+        /* SECCIONES DE EQUIPO */
+        .team-section {{ background: #fff; border-radius: 10px; padding: 20px; margin-bottom: 40px; box-shadow: 0 3px 6px rgba(0,0,0,0.05); border: 1px solid #e2e8f0; break-inside: avoid; page-break-inside: avoid; }}
+        .team-header {{ display: flex; align-items: center; gap: 15px; border-bottom: 3px solid #cbd5e0; padding-bottom: 10px; margin-bottom: 15px; }}
+        .team-shield {{ width: 60px; height: 60px; object-fit: contain; }}
+        h2 {{ margin: 0; font-size: 24px; color: #2d3748; text-transform: uppercase; font-weight: 900; }}
+
+        /* TÍTULOS DE TABLA */
+        .table-title {{ font-size: 14px; font-weight: 800; margin-bottom: 8px; padding-left: 8px; border-left: 4px solid; text-transform: uppercase; display: inline-block; }}
+        .title-top {{ border-color: #38a169; color: #276749; background: #f0fff4; padding: 4px 10px; border-radius: 0 4px 4px 0; }}
+        .title-bot {{ border-color: #e53e3e; color: #c53030; background: #fff5f5; padding: 4px 10px; border-radius: 0 4px 4px 0; margin-top: 15px; }}
+
+        /* TABLAS */
+        .table-container {{ overflow-x: auto; }}
+        table {{ width: 100%; min-width: 1000px; border-collapse: collapse; text-align: center; table-layout: fixed; margin-bottom: 5px; }}
+        th {{ background: #2d3748; color: #fff; padding: 12px 4px; font-size: 12px; font-weight: 800; text-transform: uppercase; border-right: 1px solid #4a5568; }}
+        th:last-child {{ border-right: none; }}
+        td {{ padding: 10px 2px; border-bottom: 1px solid #edf2f7; vertical-align: middle; font-size: 13px; font-weight: 700; color: #2d3748; border-right: 1px solid #edf2f7; }}
+        td:last-child {{ border-right: none; }}
+
+        /* TARJETAS DE JUGADORES */
+        th.col-lineup {{ width: 45%; text-align: left; padding-left: 15px; }}
+        .players-flex {{ display: flex; justify-content: flex-start; gap: 6px; flex-wrap: nowrap; }}
+        .player-card {{ text-align: center; font-size: 11px; width: 85px; font-weight: bold; color: #4a5568; background: #f8fafc; padding: 8px 4px; border-radius: 6px; border: 1px solid #e2e8f0; }}
+        .player-role-label {{ font-size: 10px; color: #2b6cb0; font-weight: 900; margin-bottom: 4px; display: flex; align-items: center; justify-content: center; text-transform: uppercase; height: 26px; line-height: 1.1; overflow: hidden; }}
+        .player-card img {{ width: 44px; height: 44px; border-radius: 50%; border: 2px solid #cbd5e0; object-fit: cover; margin-bottom: 4px; background: #fff; }}
+        .player-pos {{ font-size: 9px; color: #fff; background: #718096; padding: 3px 6px; border-radius: 3px; text-transform: uppercase; display: inline-block; margin-top: 3px; font-weight: bold; }}
+
+        /* MÉTRICAS */
+        .metric-adv {{ font-size: 14px; font-weight: 800; color: #2d3748; }}
+        .metric-huge {{ font-size: 16px; font-weight: 900; }}
+        .text-green {{ color: #38a169; }} .text-red {{ color: #e53e3e; }} .text-blue {{ color: #2b6cb0; }}
+        .bg-ts {{ background: #2c7a7b !important; color: #fff; }}
+
+        /* FOOTER */
+        .footer {{ position: fixed; bottom: 0; left: 0; width: 100%; background: #1a202c; color: #cbd5e0; text-align: center; padding: 12px 0; font-size: 13px; border-top: 4px solid #ed8936; z-index: 1000; box-shadow: 0 -4px 10px rgba(0,0,0,0.15); display: flex; align-items: center; justify-content: center; }}
+        .footer a {{ color: #fff; text-decoration: none; }}
+
+        /* PRINT */
+        @media print {{
+            body {{ background: #fff; padding: 0; margin: 0; padding-bottom: 40px; }}
+            .top-banner, .legend-grid {{ box-shadow: none; border: 1px solid #cbd5e0; }}
+            .team-section {{ box-shadow: none; border: 1px solid #cbd5e0; break-inside: avoid; page-break-inside: avoid; }}
+            .footer {{ position: fixed; bottom: 0; }}
+        }}
+    </style></head><body>
+
+    <div class="top-banner">
+        <div class="top-logos">
+            <img src="data:image/png;base64,{logo_feb_b64}" class="logo-side" onerror="this.style.display='none'">
+            <img src="data:image/png;base64,{logo_empresa_b64}" class="logo-center" onerror="this.style.display='none'">
+            <img src="data:image/png;base64,{logo_liga_b64}" class="logo-side" onerror="this.style.display='none'">
+        </div>
+        <div class="header-title-block">
+            <h1>Advanced Positional Scouting: Lineups</h1>
+            <div class="subtitle">Full League Analysis — Primera FEB 25/26 | Min. {m_filt} minutes played per lineup</div>
+        </div>
+    </div>
+
+    <div class="legend-grid">
+        <div class="legend-item"><b>TOTAL MIN:</b> Minutes played together.<br><b>PTS /40:</b> Points scored projected to 40 min.<br><b>PA /40:</b> Points allowed projected to 40 min.</div>
+        <div class="legend-item"><b>NET RTG /40:</b> Net point differential per 40 min.<br><b>TS% *:</b> Average True Shooting %.<br><b>eFG% *:</b> Average Effective Field Goal %.</div>
+        <div class="legend-item"><b>TOV% *:</b> Average Turnover %.<br><b>ORB% *:</b> Average Offensive Rebound %.<br><b>FTr *:</b> Average Free Throw Rate.</div>
+        <div class="legend-item"><b>USG% *:</b> Average Usage %.<br><i>* Note: These metrics reflect the theoretical aggregated individual average of the 5 players based on their full season performance.</i></div>
+    </div>
+    """
+
+    # --------------------------------------------------------------------------
+    # Bucle por equipos
+    # --------------------------------------------------------------------------
+    equipos = sorted(df_valid['TEAM'].unique())
+
+    for eq in equipos:
+        eq_clean = clear_string(eq).replace(" ", "")
+        logo_url = "https://via.placeholder.com/60"
+        for k, v in dicc_logos_m13.items():
+            if clear_string(k).replace(" ", "") == eq_clean or eq_clean in clear_string(k).replace(" ", ""):
+                logo_url = v
+                break
+
+        df_eq      = df_valid[df_valid['TEAM'] == eq].copy()
+        arch_stats = df_eq.groupby('ARCHETYPE').agg(
+            {'MINUTES': 'sum', 'PTS_FOR': 'sum', 'PTS_AGAINST': 'sum'}
+        ).reset_index()
+        arch_stats = arch_stats[arch_stats['MINUTES'] >= m_filt].copy()
+
+        if arch_stats.empty:
+            continue
+
+        real_lineup_stats = df_eq.groupby(['ARCHETYPE', 'REAL_LINEUP']).agg(
+            {'MINUTES': 'sum'}
+        ).reset_index()
+        best_real_lineups = (
+            real_lineup_stats
+            .sort_values('MINUTES', ascending=False)
+            .drop_duplicates(subset=['ARCHETYPE'])
+        )
+        efficiency = pd.merge(arch_stats, best_real_lineups[['ARCHETYPE', 'REAL_LINEUP']], on='ARCHETYPE')
+
+        efficiency['PTS_40']     = np.where(efficiency['MINUTES'] > 0, (efficiency['PTS_FOR']     / efficiency['MINUTES']) * 40, 0)
+        efficiency['PA_40']      = np.where(efficiency['MINUTES'] > 0, (efficiency['PTS_AGAINST'] / efficiency['MINUTES']) * 40, 0)
+        efficiency['NET_RATING'] = (efficiency['PTS_40'] - efficiency['PA_40']).round(1)
+        for col in ['PTS_40', 'PA_40']: efficiency[col] = efficiency[col].round(1)
+
+        df_sorted = efficiency.sort_values(by='NET_RATING', ascending=False)
+        top3      = df_sorted.head(3)
+        bottom3   = df_sorted.loc[~df_sorted.index.isin(top3.index)].tail(3) if len(df_sorted) > 3 else pd.DataFrame()
+
+        html_content += (
+            f"<div class='team-section'>"
+            f"<div class='team-header'><img src='{logo_url}' class='team-shield'><h2>{eq}</h2></div>"
+            f"<div class='table-title title-top'>MOST EFFICIENT LINEUPS</div>"
+            f"{render_table_m16(top3)}"
+        )
+        if not bottom3.empty:
+            html_content += (
+                f"<div class='table-title title-bot'>LEAST EFFICIENT LINEUPS</div>"
+                f"{render_table_m16(bottom3)}"
+            )
+        html_content += "</div>"
+
+    # --------------------------------------------------------------------------
+    # Footer
+    # --------------------------------------------------------------------------
+    html_content += f"""
+    <div class="footer">
+        <img src="data:image/png;base64,{logo_empresa_b64}" style="height:18px; vertical-align:middle; margin-right:10px;" onerror="this.style.display='none'">
+        © 2026 Analizing Basketball | <a href="https://www.analizingbasketball.com" target="_blank">www.analizingbasketball.com</a>
+    </div>
+    </body></html>"""
+
+    # --------------------------------------------------------------------------
+    # Guardar y devolver
+    # --------------------------------------------------------------------------
+    out_name  = f"LIGA_LINEUPS_m{m_filt}.html"
+    ruta_final = os.path.join(REPORTS_DIR, out_name)
+    with open(ruta_final, "w", encoding="utf-8") as f:
+        f.write(html_content)
+
+    return html_content
+
+
+# === MÓDULO 16: ENDPOINT ===
+@app.get("/liga_lineups", response_class=HTMLResponse)
+def liga_lineups_api(m_filt: int = 15):
+    """
+    Informe completo de quintetos para toda la liga (18 equipos, temporada completa).
+    Parámetro: m_filt = minutos mínimos jugados juntos por el quinteto (default: 15).
+    """
+    html_content = generar_html_liga_lineups(m_filt=m_filt)
+    return HTMLResponse(content=html_content, status_code=200)
 
 # ==============================================================================
 # EJECUCIÓN DEL SERVIDOR
