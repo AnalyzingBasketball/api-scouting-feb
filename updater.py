@@ -24,6 +24,14 @@ OUT_TEAMSTATS = os.path.join(DATA_DIR, "TEAMSTATS_PRIMERAFEB_2526.csv")
 OUT_PBP       = os.path.join(DATA_DIR, "PLAYBYPLAY_PRIMERAFEB_2526.csv")
 OUT_LINEUPS   = os.path.join(DATA_DIR, "LINEUPS_PRIMERAFEB_2526.csv")
 
+# ── Conexión a Supabase (opcional — si no hay DATABASE_URL usa solo CSVs) ─────
+from sqlalchemy import create_engine, text as sql_text
+_DB_URL = os.environ.get("DATABASE_URL")
+_engine  = create_engine(_DB_URL) if _DB_URL else None
+
+def db_ok():
+    return _engine is not None
+
 HEADERS_WEB = {'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36'}
 BASE_URL    = "https://www.feb.es"
 
@@ -478,23 +486,67 @@ def procesar_estadisticas_acumuladas():
             continue
 
     # E) APPEND ACUMULATIVO
-    def append_and_save(new_data_list, filepath):
-        if not new_data_list: return
-        df_new = pd.concat(new_data_list, ignore_index=True) if isinstance(new_data_list[0], pd.DataFrame) else pd.DataFrame(new_data_list)
-        if os.path.exists(filepath):
-            try:
-                df_old   = pd.read_csv(filepath, dtype=str)
-                df_final = pd.concat([df_old, df_new.astype(str)], ignore_index=True)
-            except: df_final = df_new
-        else: df_final = df_new
-        df_final['ROUND_NUM'] = pd.to_numeric(df_final['ROUND'], errors='coerce').fillna(0).astype(int)
-        df_final = df_final.sort_values(by=['ROUND_NUM','MATCHID']).drop(columns=['ROUND_NUM'])
-        df_final.to_csv(filepath, index=False, encoding='utf-8-sig', float_format='%.1f')
+    def append_and_save(new_data_list, filepath, tabla=None, conflict_cols=None):
+    if not new_data_list: return
+    df_new = pd.concat(new_data_list, ignore_index=True) \
+             if isinstance(new_data_list[0], pd.DataFrame) \
+             else pd.DataFrame(new_data_list)
 
-    if all_boxscores: append_and_save(all_boxscores, OUT_BOXSCORE)
-    if all_teamstats: append_and_save(all_teamstats, OUT_TEAMSTATS)
-    if all_pbp:       append_and_save(all_pbp, OUT_PBP)
+    # ── Escritura en Supabase ─────────────────────────────────────────────────
+    if db_ok() and tabla:
+        try:
+            df_db = df_new.copy()
+            df_db.columns = df_db.columns.str.lower()
+            staging = f"{tabla}_staging"
+            df_db.to_sql(staging, _engine, if_exists='replace',
+                         index=False, method='multi', chunksize=200)
+            if conflict_cols:
+                conflict_str = ", ".join(conflict_cols)
+                with _engine.connect() as conn:
+                    conn.execute(sql_text(f"""
+                        INSERT INTO {tabla}
+                        SELECT * FROM {staging}
+                        ON CONFLICT ({conflict_str}) DO NOTHING;
+                        DROP TABLE IF EXISTS {staging};
+                    """))
+                    conn.commit()
+            else:
+                with _engine.connect() as conn:
+                    conn.execute(sql_text(f"""
+                        INSERT INTO {tabla} SELECT * FROM {staging};
+                        DROP TABLE IF EXISTS {staging};
+                    """))
+                    conn.commit()
+            print(f"  ✅ BD actualizada: tabla '{tabla}'")
+        except Exception as e:
+            print(f"  ⚠️ Error escribiendo en BD ({tabla}): {e}")
 
+    # ── Escritura CSV (backup) ────────────────────────────────────────────────
+    if os.path.exists(filepath):
+        try:
+            df_old   = pd.read_csv(filepath, dtype=str)
+            df_final = pd.concat([df_old, df_new.astype(str)], ignore_index=True)
+        except: df_final = df_new
+    else:
+        df_final = df_new
+    df_final['ROUND_NUM'] = pd.to_numeric(
+        df_final['ROUND'], errors='coerce').fillna(0).astype(int)
+    df_final = df_final.sort_values(['ROUND_NUM','MATCHID'])\
+                       .drop(columns=['ROUND_NUM'])
+    df_final.to_csv(filepath, index=False, encoding='utf-8-sig',
+                    float_format='%.1f')
+
+    if all_boxscores:
+        append_and_save(all_boxscores, OUT_BOXSCORE,
+                        tabla='boxscore',
+                        conflict_cols=['match_id', 'player_id'])
+    if all_teamstats:
+        append_and_save(all_teamstats, OUT_TEAMSTATS,
+                        tabla='teamstats',
+                        conflict_cols=['match_id', 'team_id'])
+    if all_pbp:
+        append_and_save(all_pbp, OUT_PBP,
+                        tabla='pbp')
     if all_lineups:
         df_lu = pd.DataFrame(all_lineups)
         agrupadores = ['MATCHID','ROUND','TEAM_ID','TEAM','LOCATION',
@@ -504,7 +556,10 @@ def procesar_estadisticas_acumuladas():
         df_lu_final['PTS_FOR_PER40'] = (df_lu_final['PTS_FOR']    *2400/df_lu_final['SECONDS'].replace(0,np.nan)).round(1).fillna(0)
         df_lu_final['PTS_AGT_PER40'] = (df_lu_final['PTS_AGAINST']*2400/df_lu_final['SECONDS'].replace(0,np.nan)).round(1).fillna(0)
         df_lu_final['NET_PER40']     = (df_lu_final['PLUS_MINUS'] *2400/df_lu_final['SECONDS'].replace(0,np.nan)).round(1).fillna(0)
-        append_and_save([df_lu_final], OUT_LINEUPS)
+        append_and_save([df_lu_final], OUT_LINEUPS,
+                        tabla='lineups',
+                        conflict_cols=['match_id', 'team_id',
+                                       'p1_id', 'p2_id', 'p3_id', 'p4_id', 'p5_id'])
 
     return procesados_ahora, errores
 
