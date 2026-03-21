@@ -1,0 +1,24 @@
+name: Migración Inicial a Supabase
+on:
+  workflow_dispatch:
+    # Solo se ejecuta manualmente, nunca automático
+
+jobs:
+  init:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Descargar código
+        uses: actions/checkout@v3
+
+      - name: Configurar Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.10'
+
+      - name: Instalar librerías
+        run: pip install -r requirements.txt
+
+      - name: Ejecutar migración
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+        run: python scripts/init_db.py
