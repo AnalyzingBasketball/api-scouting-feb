@@ -1,4 +1,5 @@
 import os
+import time
 import requests
 import pandas as pd
 import numpy as np
@@ -8,7 +9,7 @@ import base64
 import unicodedata
 from bs4 import BeautifulSoup
 from fastapi import FastAPI, HTTPException
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 import uvicorn
 
@@ -34,6 +35,7 @@ FILE_LINEUPS  = os.path.join(DATA_DIR, "LINEUPS_PRIMERAFEB_2526.csv")
 FILE_PHOTOS   = os.path.join(DATA_DIR, "raw_data", "PLAYER_NAMES_DICT.json")
 FILE_LOGOS    = os.path.join(DATA_DIR, "logos_equipos.json")
 FILE_CALENDAR = os.path.join(DATA_DIR, "CALENDAR_PRIMERAFEB_2526.csv")
+FILE_MASTER_BOXSCORE = os.path.join(DATA_DIR, "BOXSCORE_PRIMERAFEB_2526.csv")
 
 # ==============================================================================
 # 2. FUNCIONES GLOBALES DE AYUDA
@@ -214,34 +216,102 @@ def obtener_partidos_jornada(jornada_id):
                 })
     return datos_partidos
 
+
+# ── NUEVO: Lookup de partido desde CSV (sin scraping) ─────────────────────────
+def buscar_partido_en_csv(equipo: str, jornada: int):
+    """
+    Busca el partido de un equipo en una jornada usando el BOXSCORE maestro.
+    Retorna None si la jornada no está en el CSV (partido futuro).
+    """
+    if not os.path.exists(FILE_MASTER_BOXSCORE):
+        return None
+    try:
+        df = pd.read_csv(FILE_MASTER_BOXSCORE)
+        df['TEAM'] = df['TEAM'].replace(TEAM_FIXES_GLOBAL)
+        fila = df[(df['TEAM'] == equipo) & (df['ROUND'] == jornada)][['MATCHID','LOCATION']].drop_duplicates()
+        if fila.empty:
+            return None
+        match_id = str(int(fila['MATCHID'].iloc[0]))
+        match_teams = df[df['MATCHID'] == int(match_id)][['TEAM','LOCATION']].drop_duplicates()
+        local_rows   = match_teams[match_teams['LOCATION'] == 'HOME']['TEAM']
+        away_rows    = match_teams[match_teams['LOCATION'] == 'AWAY']['TEAM']
+        equipo_local     = local_rows.iloc[0] if not local_rows.empty else equipo
+        equipo_visitante = away_rows.iloc[0]  if not away_rows.empty else "Visitante"
+        return {"match_id": match_id, "equipo_local": equipo_local,
+                "equipo_visitante": equipo_visitante, "jugado": True, "fecha": f"Jornada {jornada}"}
+    except:
+        return None
+
+# ── FALLBACK: scraping feb.es (solo para jornadas no en el CSV) ───────────────
+def obtener_partido_por_scraping(equipo: str, jornada: int):
+    """Scraping de feb.es como fallback para jornadas futuras no en el CSV."""
+    try:
+        res  = requests.get("https://www.feb.es/competiciones/calendario/primerafeb/1/2025", headers=HEADERS_WEB, timeout=10)
+        soup = BeautifulSoup(res.text, 'html.parser')
+        for col in soup.find_all('div', class_='columna'):
+            h1 = col.find('h1', class_='titulo-modulo')
+            if not h1: continue
+            mj = re.search(r'Jornada\s+(\d+)', h1.get_text(strip=True), re.IGNORECASE)
+            if not mj or str(mj.group(1)) != str(jornada): continue
+            fecha_partido = h1.get_text(strip=True).replace(mj.group(0), "").strip() or "Fecha Desconocida"
+            tabla = col.find('table')
+            if not tabla: continue
+            for fila in tabla.find_all('tr'):
+                if fila.find('th') or 'LOCAL' in fila.get_text(strip=True).upper(): continue
+                enlaces_equipo = fila.find_all('a', href=re.compile(r'Equipo\.aspx', re.IGNORECASE))
+                enlace_partido = fila.find('a', href=re.compile(r'Partido\.aspx\?p=', re.IGNORECASE))
+                if not enlace_partido or len(enlaces_equipo) < 2: continue
+                local_name = enlaces_equipo[0].get_text(strip=True)
+                visit_name = enlaces_equipo[-1].get_text(strip=True)
+                if equipo.upper() not in local_name.upper() and equipo.upper() not in visit_name.upper(): continue
+                match_id  = re.search(r'p=(\d+)', enlace_partido['href'], re.IGNORECASE).group(1)
+                resultado = enlace_partido.get_text(strip=True)
+                jugado    = "-" in resultado and any(c.isdigit() for c in resultado)
+                return {"match_id": match_id, "equipo_local": local_name,
+                        "equipo_visitante": visit_name, "jugado": jugado, "fecha": fecha_partido}
+    except: pass
+    return None
+
 def extraer_partido_api(match_id):
+    ruta_pbp = os.path.join(DATA_DIR, f'pbp_{match_id}.csv')
+    ruta_box = os.path.join(DATA_DIR, f'boxscore_{match_id}.csv')
+    # ── CACHÉ: si ambos ficheros ya existen no hace falta descargar ──
+    if os.path.exists(ruta_pbp) and os.path.exists(ruta_box):
+        return True
     session = requests.Session()
     session.headers.update({"User-Agent": HEADERS_WEB['User-Agent'], "Origin": BASE_URL, "Referer": BASE_URL+"/", "Accept": "application/json"})
     try:
-        res_web = session.get(f"https://www.feb.es/competiciones/partido/{match_id}")
+        res_web = session.get(f"https://www.feb.es/competiciones/partido/{match_id}", timeout=10)
         soup    = BeautifulSoup(res_web.text, 'html.parser')
         token   = soup.find('input', id='_ctl0_token')['value'].strip()
         session.headers.update({"Authorization": f"Bearer {token}"})
     except: return False
     base_url_api = "https://intrafeb.feb.es/LiveStats.API/api/v1"
     try:
-        data_pbp  = session.get(f"{base_url_api}/KeyFacts/{match_id}").json()
-        pbp_list  = data_pbp.get('PLAYBYPLAY', {}).get('LINES', [])
-        pd.DataFrame(pbp_list).to_csv(os.path.join(DATA_DIR, f'pbp_{match_id}.csv'), index=False, encoding='utf-8-sig')
-        data_box  = session.get(f"{base_url_api}/BoxScore/{match_id}").json()
-        teams_box = data_box.get('BOXSCORE', {}).get('TEAM', [])
-        box_flat  = []
-        for t in teams_box:
-            t_name = t.get('name')
-            for p in t.get('PLAYER', []): p['team_name'] = t_name; box_flat.append(p)
-        pd.DataFrame(box_flat).to_csv(os.path.join(DATA_DIR, f'boxscore_{match_id}.csv'), index=False, encoding='utf-8-sig')
+        if not os.path.exists(ruta_pbp):
+            data_pbp  = session.get(f"{base_url_api}/KeyFacts/{match_id}", timeout=10).json()
+            pbp_list  = data_pbp.get('PLAYBYPLAY', {}).get('LINES', [])
+            pd.DataFrame(pbp_list).to_csv(ruta_pbp, index=False, encoding='utf-8-sig')
+        if not os.path.exists(ruta_box):
+            data_box  = session.get(f"{base_url_api}/BoxScore/{match_id}", timeout=10).json()
+            teams_box = data_box.get('BOXSCORE', {}).get('TEAM', [])
+            box_flat  = []
+            for t in teams_box:
+                t_name = t.get('name')
+                for p in t.get('PLAYER', []): p['team_name'] = t_name; box_flat.append(p)
+            pd.DataFrame(box_flat).to_csv(ruta_box, index=False, encoding='utf-8-sig')
         return True
     except: return False
 
 def limpiar_y_avanzadas(match_id, local, visitante, jornada):
-    jornada_str = f"Jornada-{jornada}"
-    local_str   = limpiar_texto_archivo(local)
-    visit_str   = limpiar_texto_archivo(visitante)
+    jornada_str    = f"Jornada-{jornada}"
+    local_str      = limpiar_texto_archivo(local)
+    visit_str      = limpiar_texto_archivo(visitante)
+    ruta_box_clean = os.path.join(DATA_DIR, f"boxscore_{match_id}_{jornada_str}_{local_str}_vs_{visit_str}_clean.csv")
+    ruta_pbp_clean = os.path.join(DATA_DIR, f"pbp_{match_id}_{jornada_str}_{local_str}_vs_{visit_str}_clean.csv")
+    # ── CACHÉ: si los ficheros limpios ya existen, saltar todo el procesamiento ──
+    if os.path.exists(ruta_box_clean) and os.path.exists(ruta_pbp_clean):
+        return ruta_pbp_clean, ruta_box_clean
 
     df_box = pd.read_csv(os.path.join(DATA_DIR, f"boxscore_{match_id}.csv"))
     mapeo  = {
@@ -259,7 +329,6 @@ def limpiar_y_avanzadas(match_id, local, visitante, jornada):
             df_clean[col] = df_clean[col].astype(str).str.replace(',', '.').astype(float)
     if 'Player' in df_clean.columns:
         df_clean['Player'] = df_clean['Player'].apply(formatear_nombre_jugador)
-    ruta_box_clean = os.path.join(DATA_DIR, f"boxscore_{match_id}_{jornada_str}_{local_str}_vs_{visit_str}_clean.csv")
     df_clean.to_csv(ruta_box_clean, index=False, encoding='utf-8-sig')
 
     df_pbp = pd.read_csv(os.path.join(DATA_DIR, f"pbp_{match_id}.csv"))
@@ -323,7 +392,6 @@ def limpiar_y_avanzadas(match_id, local, visitante, jornada):
     df_pbp = df_pbp.rename(columns={'quarter': 'Period', 'time': 'Time', 'scoreA': 'Score_Home', 'scoreB': 'Score_Away'})
     columnas_finales = ['Period', 'Time', 'Seconds', 'Score_Home', 'Score_Away', 'Team', 'Player',
                         'Action_Type', 'text', 'H1', 'H2', 'H3', 'H4', 'H5', 'A1', 'A2', 'A3', 'A4', 'A5']
-    ruta_pbp_clean = os.path.join(DATA_DIR, f"pbp_{match_id}_{jornada_str}_{local_str}_vs_{visit_str}_clean.csv")
     df_pbp[[c for c in columnas_finales if c in df_pbp.columns]].to_csv(ruta_pbp_clean, index=False, encoding='utf-8-sig')
     return ruta_pbp_clean, ruta_box_clean
 
@@ -1199,6 +1267,15 @@ def HTML_BOXSCORE_AGREGADO_M14(df_all_box, eq_objetivo, context_str, team_games_
 def generar_html_liga_lineups(m_filt: int = 15):
     if not os.path.exists(FILE_LINEUPS):
         raise HTTPException(status_code=404, detail="Archivo LINEUPS maestro no encontrado en el servidor.")
+
+    # ── CACHÉ 24H: devolver HTML cacheado si tiene menos de 24 horas ──
+    cache_path = os.path.join(REPORTS_DIR, f"LIGA_LINEUPS_m{m_filt}.html")
+    if os.path.exists(cache_path):
+        age_hours = (time.time() - os.path.getmtime(cache_path)) / 3600
+        if age_hours < 24:
+            with open(cache_path, "r", encoding="utf-8") as f:
+                return f.read()
+
     cargar_datos_m13()
 
     df_lineups = pd.read_csv(FILE_LINEUPS)
@@ -1360,24 +1437,36 @@ def generar_html_liga_lineups(m_filt: int = 15):
 app = FastAPI()
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_credentials=True, allow_methods=["*"], allow_headers=["*"])
 
+# ── HEALTH ENDPOINT — para keep-alive y UptimeRobot ───────────────────────────
+@app.get("/health")
+def health():
+    return JSONResponse(content={"status": "ok"}, status_code=200)
+
 # === MÓDULO 12 ===
 @app.get("/generar", response_class=HTMLResponse)
 def generar_scouting(jornada: int = 22, equipo: str = "MOVISTAR ESTUDIANTES", tipo_reporte: str = "quintetos"):
     cargar_roles_m12()
     if not os.path.exists(FILE_LOGOS): extraer_diccionario_logos()
-    if not os.path.exists(FILE_CALENDAR): construir_calendario_maestro()
-    partidos = obtener_partidos_jornada(jornada)
-    if equipo != 'TODOS':
-        partidos = [p for p in partidos if equipo.upper() == p['equipo_local'].upper() or equipo.upper() == p['equipo_visitante'].upper()]
-    if not partidos: raise HTTPException(status_code=404, detail="No se encontraron partidos para esa combinación de jornada y equipo.")
-    p = partidos[0]
-    if not p['jugado']: raise HTTPException(status_code=400, detail="El partido aún no se ha disputado.")
-    if not extraer_partido_api(p['match_id']): raise HTTPException(status_code=500, detail="Error al descargar datos en vivo.")
-    ruta_pbp_clean, ruta_box_clean = limpiar_y_avanzadas(p['match_id'], p['equipo_local'], p['equipo_visitante'], jornada)
+
+    # ── OPT 1: buscar partido en CSV primero, scraping solo como fallback ──
+    partido = buscar_partido_en_csv(equipo, jornada)
+    if partido is None:
+        partido = obtener_partido_por_scraping(equipo, jornada)
+    if partido is None:
+        raise HTTPException(status_code=404, detail=f"No se encontró el partido de {equipo} en la jornada {jornada}.")
+    if not partido['jugado']:
+        raise HTTPException(status_code=400, detail="El partido aún no se ha disputado.")
+
+    # ── OPT 2 y 3: extraer y limpiar con caché interno ──
+    if not extraer_partido_api(partido['match_id']):
+        raise HTTPException(status_code=500, detail="Error al descargar datos del partido.")
+    ruta_pbp_clean, ruta_box_clean = limpiar_y_avanzadas(
+        partido['match_id'], partido['equipo_local'], partido['equipo_visitante'], jornada
+    )
     if tipo_reporte.lower() == "quintetos":
-        ruta_final = generar_html_quintetos(ruta_pbp_clean, ruta_box_clean, p['match_id'], p['equipo_local'], p['equipo_visitante'], p['fecha'])
+        ruta_final = generar_html_quintetos(ruta_pbp_clean, ruta_box_clean, partido['match_id'], partido['equipo_local'], partido['equipo_visitante'], partido['fecha'])
     else:
-        ruta_final = generar_html_boxscore(ruta_box_clean, ruta_pbp_clean, p['match_id'], p['equipo_local'], p['equipo_visitante'], p['fecha'])
+        ruta_final = generar_html_boxscore(ruta_box_clean, ruta_pbp_clean, partido['match_id'], partido['equipo_local'], partido['equipo_visitante'], partido['fecha'])
     with open(ruta_final, "r", encoding="utf-8") as f: html_content = f.read()
     return HTMLResponse(content=html_content, status_code=200)
 
