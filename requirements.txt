@@ -5,3 +5,5 @@ requests
 beautifulsoup4
 numpy
 lxml
+sqlalchemy
+psycopg2-binary
