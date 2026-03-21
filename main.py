@@ -11,7 +11,41 @@ from bs4 import BeautifulSoup
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
+from sqlalchemy import create_engine, text as sql_text
 import uvicorn
+
+# ==============================================================================
+# 0. CONEXIÓN A SUPABASE (opcional — si no hay DATABASE_URL usa solo ficheros)
+# ==============================================================================
+_DB_URL = os.environ.get("DATABASE_URL")
+_engine  = create_engine(_DB_URL, pool_pre_ping=True) if _DB_URL else None
+
+def get_html_cache(key: str):
+    """Devuelve HTML cacheado de BD o None si no existe o tiene más de 24h."""
+    if not _engine: return None
+    try:
+        with _engine.connect() as conn:
+            row = conn.execute(sql_text(
+                "SELECT html, created_at FROM html_cache WHERE cache_key = :k"
+            ), {"k": key}).fetchone()
+            if not row: return None
+            age = (pd.Timestamp.utcnow() - pd.Timestamp(row.created_at)).total_seconds()
+            return row.html if age < 86400 else None
+    except: return None
+
+def set_html_cache(key: str, html: str):
+    """Guarda HTML en BD. Silencioso si falla."""
+    if not _engine: return
+    try:
+        with _engine.connect() as conn:
+            conn.execute(sql_text("""
+                INSERT INTO html_cache (cache_key, html)
+                VALUES (:k, :h)
+                ON CONFLICT (cache_key) DO UPDATE
+                SET html = EXCLUDED.html, created_at = NOW()
+            """), {"k": key, "h": html})
+            conn.commit()
+    except: pass
 
 # ==============================================================================
 # 1. CONFIGURACIÓN Y RUTAS GLOBALES
@@ -1347,13 +1381,10 @@ def generar_html_liga_lineups(m_filt: int = 15):
     if not os.path.exists(FILE_LINEUPS):
         raise HTTPException(status_code=404, detail="Archivo LINEUPS maestro no encontrado en el servidor.")
 
-    # ── CACHÉ 24H: devolver HTML cacheado si tiene menos de 24 horas ──
-    cache_path = os.path.join(REPORTS_DIR, f"LIGA_LINEUPS_m{m_filt}.html")
-    if os.path.exists(cache_path):
-        age_hours = (time.time() - os.path.getmtime(cache_path)) / 3600
-        if age_hours < 24:
-            with open(cache_path, "r", encoding="utf-8") as f:
-                return f.read()
+    # ── CACHÉ 24H: devolver HTML cacheado de BD si existe ──
+    cache_key = f"liga_lineups_m{m_filt}"
+    cached    = get_html_cache(cache_key)
+    if cached: return cached
 
     cargar_datos_m13()
 
@@ -1499,8 +1530,7 @@ def generar_html_liga_lineups(m_filt: int = 15):
         © 2026 Analizing Basketball | <a href="https://www.analizingbasketball.com" target="_blank">www.analizingbasketball.com</a>
     </div></body></html>"""
 
-    ruta_final = os.path.join(REPORTS_DIR, f"LIGA_LINEUPS_m{m_filt}.html")
-    with open(ruta_final, "w", encoding="utf-8") as f: f.write(html_content)
+    set_html_cache(f"liga_lineups_m{m_filt}", html_content)
     return html_content
 
 # ==============================================================================
@@ -1528,6 +1558,11 @@ def generar_scouting(jornada: int = 22, equipo: str = "MOVISTAR ESTUDIANTES", ti
     if not partido['jugado']:
         raise HTTPException(status_code=400, detail="El partido aún no se ha disputado.")
 
+    # Devolver caché de BD si existe
+    _cache_key = f"{tipo_reporte.lower()}_{partido['match_id']}"
+    _cached    = get_html_cache(_cache_key)
+    if _cached: return HTMLResponse(content=_cached, status_code=200)
+
     if not extraer_partido_api(partido['match_id']):
         raise HTTPException(status_code=500, detail="Error al descargar datos del partido.")
     ruta_pbp_clean, ruta_box_clean = limpiar_y_avanzadas(
@@ -1538,6 +1573,7 @@ def generar_scouting(jornada: int = 22, equipo: str = "MOVISTAR ESTUDIANTES", ti
     else:
         ruta_final = generar_html_boxscore(ruta_box_clean, ruta_pbp_clean, partido['match_id'], partido['equipo_local'], partido['equipo_visitante'], partido['fecha'])
     with open(ruta_final, "r", encoding="utf-8") as f: html_content = f.read()
+    set_html_cache(_cache_key, html_content)
     return HTMLResponse(content=html_content, status_code=200)
 
 # === MÓDULO 13 ===
