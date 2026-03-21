@@ -116,6 +116,23 @@ def match_team_name(target_name, available_names):
 def clear_string(s):
     return ''.join(c for c in unicodedata.normalize('NFKD', str(s)) if not unicodedata.combining(c)).upper()
 
+# ── NUEVO: función de orden posicional clásico reutilizable ───────────────────
+def get_classic_pos_order(pos_str):
+    """
+    Devuelve el orden clásico de posición (1-5).
+    Jugadores sin posición asignada o con posición desconocida → 6 (van al final).
+    """
+    if pd.isna(pos_str) or str(pos_str).strip() in ['', 'nan', 'None', 'N/A']:
+        return 6
+    pos_up = str(pos_str).strip().upper()
+    if 'PG' in pos_up or 'BASE'    in pos_up: return 1
+    if 'SG' in pos_up or 'ESCOLTA' in pos_up: return 2
+    if 'SF' in pos_up or 'ALERO'   in pos_up: return 3
+    if 'PF' in pos_up or 'ALA'     in pos_up: return 4
+    if 'C'  in pos_up or 'PIV'     in pos_up: return 5
+    return 6
+# ─────────────────────────────────────────────────────────────────────────────
+
 # Diccionario de corrección de nombres de equipo (usado en todos los módulos)
 TEAM_FIXES_GLOBAL = {
     'CLUB OURENSE BALONCESTO':  'CLOUD.GAL OURENSE BALONCESTO',
@@ -223,7 +240,7 @@ def obtener_partidos_jornada(jornada_id):
     return datos_partidos
 
 
-# ── NUEVO: Lookup de partido desde CSV (sin scraping) ─────────────────────────
+# ── Lookup de partido desde CSV (sin scraping) ────────────────────────────────
 def buscar_partido_en_csv(equipo: str, jornada: int):
     """
     Busca el partido de un equipo en una jornada usando el BOXSCORE maestro.
@@ -439,9 +456,19 @@ def generar_html_quintetos(ruta_pbp_clean, ruta_box_clean, match_id, equipo_loca
 
     escudo_local = get_escudo(equipo_local)
     escudo_visit = get_escudo(equipo_visit)
-    dict_fotos   = {}
+
+    dict_fotos = {}
     for _, r in df_box.iterrows():
         dict_fotos[remove_accents(str(r['Player']).strip().lower())] = r['Logo_URL']
+
+    # ── NUEVO: mapa nombre normalizado → player_id (para ordenación posicional) ──
+    dict_name_to_pid = {}
+    for _, r in df_box.iterrows():
+        pname_clean = remove_accents(str(r.get('Player', '')).strip().lower())
+        pid_val     = safe_id(str(r.get('Player_ID', '')))
+        if pname_clean and pid_val:
+            dict_name_to_pid[pname_clean] = pid_val
+    # ─────────────────────────────────────────────────────────────────────────────
 
     q_scores = []
     prev_h, prev_a = 0, 0
@@ -522,15 +549,40 @@ def generar_html_quintetos(ruta_pbp_clean, ruta_box_clean, match_id, equipo_loca
             })
         return sorted(datos, key=lambda x: x['segundos'], reverse=True)
 
-    lineups_local    = calc_quintetos('Lineup_Home', actual_local, actual_visit)
+    lineups_local     = calc_quintetos('Lineup_Home', actual_local, actual_visit)
     lineups_visitante = calc_quintetos('Lineup_Away', actual_visit, actual_local)
+
+    # ── Construir mapa nombre_normalizado → orden_posicional ANTES de gen_filas ──
+    # Lee directamente de dict_pos (que ya consolida JSON curado + FILE_ROLES)
+    # y añade clave sin espacios para cubrir variaciones tipo "mc grew"/"mcgrew".
+    _pos_order_map = {}
+    for _pname_clean, _pos_str in dict_pos.items():
+        _order = get_classic_pos_order(_pos_str)
+        _pos_order_map[_pname_clean] = _order
+        _pos_order_map[_pname_clean.replace(' ', '')] = _order  # variante sin espacios
+
+    def _pos_order_for_player(nombre):
+        p_clean = remove_accents(nombre.strip().lower())
+        # 1. Búsqueda exacta
+        if p_clean in _pos_order_map:
+            return _pos_order_map[p_clean]
+        # 2. Sin espacios (cubre "mc grew" ↔ "mcgrew")
+        if p_clean.replace(' ', '') in _pos_order_map:
+            return _pos_order_map[p_clean.replace(' ', '')]
+        # 3. Búsqueda parcial (nombres con leve variación)
+        for k, v in _pos_order_map.items():
+            if len(p_clean) > 4 and (p_clean in k or k in p_clean):
+                return v
+        return 6
 
     def gen_filas(lineups_data):
         filas      = ""
         particulas = ['mc','mac','de','del','la','las','los','san','van','von','da','di']
         for l in lineups_data:
+            jugadores_ordenados = sorted(l['jugadores'], key=_pos_order_for_player)
+
             jugadores_ord = []
-            for p in l['jugadores']:
+            for p in jugadores_ordenados:   # ← antes iteraba sobre l['jugadores'] sin ordenar
                 p_clean = remove_accents(p.strip().lower())
                 f_url   = dict_fotos.get(p_clean)
                 if not f_url or pd.isna(f_url) or str(f_url).strip() in ["","nan","None"]:
@@ -882,7 +934,12 @@ def generar_html_splits(s_rnd, e_rnd, eq, m_filt):
             color_class = "text-green" if pm_val > 0 else ("text-red" if pm_val < 0 else "")
             sign        = "+" if pm_val > 0 else ""
             p_ids       = row['REAL_LINEUP'].split("-")
-            p_ids.sort(key=lambda x: custom_photos_m13.get(x, {}).get('POS_ORDER', 6))
+            # Ordenación por posición clásica usando get_classic_pos_order (genérica)
+            p_ids.sort(key=lambda pid: (
+                float(custom_photos_m13.get(pid, {}).get('POS_ORDER', 6))
+                if str(custom_photos_m13.get(pid, {}).get('POS_ORDER', '')).strip() not in ['', 'nan']
+                else get_classic_pos_order(custom_photos_m13.get(pid, {}).get('POSITION', map_pos_m13.get(pid, '')))
+            ))
             cards_html  = ""
             avg_efg = avg_ts = avg_tov = avg_orb = avg_ftr = avg_usg = count = 0
             for pid in p_ids:
@@ -968,14 +1025,7 @@ def get_classic_order_m14(pid):
     if pd.notna(order) and str(order).strip() != "":
         try: return float(order)
         except: pass
-    if pd.isna(pos_raw) or str(pos_raw).strip() == "": return 6
-    pos_up = str(pos_raw).strip().upper()
-    if 'PG' in pos_up or 'BASE'    in pos_up: return 1
-    if 'SG' in pos_up or 'ESCOLTA' in pos_up: return 2
-    if 'SF' in pos_up or 'ALERO'   in pos_up: return 3
-    if 'PF' in pos_up or 'ALA'     in pos_up: return 4
-    if 'C'  in pos_up or 'PIV'     in pos_up: return 5
-    return 6
+    return get_classic_pos_order(pos_raw)
 
 def create_signatures_m14(row):
     players = [safe_id(row['P1_ID']), safe_id(row['P2_ID']), safe_id(row['P3_ID']), safe_id(row['P4_ID']), safe_id(row['P5_ID'])]
@@ -1329,14 +1379,7 @@ def generar_html_liga_lineups(m_filt: int = 15):
         if pd.notna(order) and str(order).strip() != "":
             try: return float(order)
             except: pass
-        if pd.isna(pos_raw) or str(pos_raw).strip() == "": return 6
-        pos_up = str(pos_raw).strip().upper()
-        if 'PG' in pos_up or 'BASE'    in pos_up: return 1
-        if 'SG' in pos_up or 'ESCOLTA' in pos_up: return 2
-        if 'SF' in pos_up or 'ALERO'   in pos_up: return 3
-        if 'PF' in pos_up or 'ALA'     in pos_up: return 4
-        if 'C'  in pos_up or 'PIV'     in pos_up: return 5
-        return 6
+        return get_classic_pos_order(pos_raw)
 
     def render_table_m16(df_subset):
         t_html = """<div class='table-container'><table><thead><tr>
@@ -1477,7 +1520,6 @@ def generar_scouting(jornada: int = 22, equipo: str = "MOVISTAR ESTUDIANTES", ti
     cargar_roles_m12()
     if not os.path.exists(FILE_LOGOS): extraer_diccionario_logos()
 
-    # ── OPT 1: buscar partido en CSV primero, scraping solo como fallback ──
     partido = buscar_partido_en_csv(equipo, jornada)
     if partido is None:
         partido = obtener_partido_por_scraping(equipo, jornada)
@@ -1486,7 +1528,6 @@ def generar_scouting(jornada: int = 22, equipo: str = "MOVISTAR ESTUDIANTES", ti
     if not partido['jugado']:
         raise HTTPException(status_code=400, detail="El partido aún no se ha disputado.")
 
-    # ── OPT 2 y 3: extraer y limpiar con caché interno ──
     if not extraer_partido_api(partido['match_id']):
         raise HTTPException(status_code=500, detail="Error al descargar datos del partido.")
     ruta_pbp_clean, ruta_box_clean = limpiar_y_avanzadas(
@@ -1512,8 +1553,6 @@ def splits_api(s_rnd: int = 1, e_rnd: int = 22, eq: str = "MOVISTAR ESTUDIANTES"
 def generar_contextual(eq: str = "MOVISTAR ESTUDIANTES", venue: str = "ALL", n_games: int = 3, m_filt: int = 10, tipo_reporte: str = "quintetos"):
     cargar_datos_m14()
 
-    # Fuente de verdad única para AMBAS ramas: BOXSCORE_PRIMERAFEB_2526.csv
-    # (tiene ROUND, LOCATION y MATCHID — no depende del calendario)
     FILE_MASTER_BOXSCORE = os.path.join(DATA_DIR, "BOXSCORE_PRIMERAFEB_2526.csv")
     if not os.path.exists(FILE_MASTER_BOXSCORE):
         raise HTTPException(status_code=404, detail="Archivo BOXSCORE_PRIMERAFEB_2526.csv no encontrado.")
@@ -1533,7 +1572,7 @@ def generar_contextual(eq: str = "MOVISTAR ESTUDIANTES", venue: str = "ALL", n_g
     if df_team_games.empty:
         raise HTTPException(status_code=404, detail=f"No hay partidos para '{eq}' con venue={venue}.")
 
-    df_team_games   = df_team_games.sort_values('ROUND', ascending=False).head(n_games)
+    df_team_games    = df_team_games.sort_values('ROUND', ascending=False).head(n_games)
     jornadas_validas = df_team_games['ROUND'].tolist()
     match_ids_int    = df_team_games['MATCHID'].tolist()
     jornadas_count   = len(jornadas_validas)
@@ -1591,7 +1630,7 @@ def generar_contextual(eq: str = "MOVISTAR ESTUDIANTES", venue: str = "ALL", n_g
             'IS_STARTER': 'Starter',
             'PLAYER_ID':  'Player_ID',
             'PLAYER_NAME':'Player',
-            'MIN_SECS':   'Min_Sec_Num',   # ya en segundos
+            'MIN_SECS':   'Min_Sec_Num',
             'FGM_2':      '2PM', 'FGA_2': '2PA',
             'FGM_3':      '3PM', 'FGA_3': '3PA',
             'ORB':        'OREB', 'DRB': 'DREB', 'TRB': 'TREB',
