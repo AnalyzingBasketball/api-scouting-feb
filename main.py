@@ -406,11 +406,26 @@ def generar_html_quintetos(ruta_pbp_clean, ruta_box_clean, match_id, equipo_loca
     df_box = pd.read_csv(ruta_box_clean)
     cargar_roles_m12()
 
+    # Cargar fotos y posiciones del JSON (fuente primaria de posiciones)
+    custom_photos_m12 = {}
+    try:
+        if os.path.exists(FILE_PHOTOS):
+            with open(FILE_PHOTOS, "r", encoding="utf-8") as f:
+                raw_photos = json.load(f)
+            for pid_k, info in raw_photos.items():
+                custom_photos_m12[str(pid_k).strip().replace('.0','')] = info
+    except: pass
+
     dict_roles = {}
+    dict_pos   = {}
     for _, r in df_box.iterrows():
         pid         = safe_id(str(r.get('Player_ID', '')))
         pname_clean = remove_accents(str(r.get('Player', '')).strip().lower())
         dict_roles[pname_clean] = map_role_id.get(pid, map_role_name.get(pname_clean, "N/A"))
+        # Prioridad posición: JSON curado → FILE_ROLES → vacío
+        pos_json  = custom_photos_m12.get(pid, {}).get('POSITION', '')
+        pos_roles = map_pos_id.get(pid, map_pos_name.get(pname_clean, ''))
+        dict_pos[pname_clean] = pos_json if pos_json and pos_json not in ['','nan','None','N/A','SF'] else pos_roles
 
     try:
         with open(FILE_LOGOS, "r", encoding="utf-8") as f: diccionario_escudos = json.load(f)
@@ -529,7 +544,9 @@ def generar_html_quintetos(ruta_pbp_clean, ruta_box_clean, match_id, equipo_loca
                 else:
                     n_corto = " ".join(pts[:2]) if len(pts) >= 2 else p
                 role = dict_roles.get(p_clean, "N/A")
-                jugadores_ord.append(f"<div class='player-card'><div style='color:#2b6cb0;font-size:10px;font-weight:900;text-align:center;text-transform:uppercase;height:36px;display:flex;align-items:center;justify-content:center;line-height:1.1;margin-bottom:4px;'>{role}</div><img src='{f_url}'><br>{n_corto}</div>")
+                pos  = dict_pos.get(p_clean, "")
+                pos_badge = f"<span style='font-size:9px;color:#fff;background:#718096;padding:2px 6px;border-radius:3px;text-transform:uppercase;font-weight:bold;margin-top:4px;display:inline-block;'>{pos}</span>" if pos and pos not in ["N/A","nan","None",""] else ""
+                jugadores_ord.append(f"<div class='player-card'><div style='color:#2b6cb0;font-size:10px;font-weight:900;text-align:center;text-transform:uppercase;height:36px;display:flex;align-items:center;justify-content:center;line-height:1.1;margin-bottom:4px;'>{role}</div><img src='{f_url}'><br>{n_corto}<br>{pos_badge}</div>")
             faces_html = "".join(jugadores_ord)
             pm_class   = "pm-positive" if "+" in l['pm'] else ("pm-negative" if "-" in l['pm'] else "")
             filas += f"<tr><td class='lineups-cell'><div class='players-flex'>{faces_html}</div></td><td style='font-weight:bold;'>{l['tiempo']}</td><td class='{pm_class}' style='font-size:17px;'>{l['pm']}</td><td style='font-weight:bold;color:#2b6cb0;'>{l['pts']}</td><td style='font-weight:bold;color:#e53e3e;'>{l['pa']}</td><td>{l['dreb']}</td><td style='color:#48bb78;font-weight:bold;'>{l['oreb']}</td><td style='color:#e53e3e;font-weight:bold;'>{l['opp_oreb']}</td><td>{l['ast']}</td><td style='color:#e53e3e;font-weight:bold;'>{l['tov']}</td><td style='font-weight:bold;'>{l['ortg']}</td><td style='font-weight:bold;'>{l['drtg']}</td><td>{l['efg_pct']}</td><td>{l['ts_pct']}</td><td>{l['orb_pct']}</td><td>{l['drb_pct']}</td><td>{l['ast_to']}</td><td style='font-weight:bold;color:#4a5568;'>{l['pace']}</td></tr>"
@@ -664,7 +681,7 @@ def generar_html_boxscore(ruta_box_clean, ruta_pbp_clean, match_id, equipo_local
             s_str = "S" if s_val in ['1','true','yes','*'] else ""
             mins, secs = divmod(int(p['min_sec']), 60)
             if p['min_sec'] == 0:
-                html_tables += f"<tr><td class='td-info'><img src='{foto}' class='player-photo'></td><td class='td-info player-name'>{player}</td><td class='td-info font-bold text-blue' style='font-size:11px;'>{role}</td><td class='td-info text-gray' style='font-size:11px;font-weight:bold;'>{pos}</td><td class='td-info font-bold' style='color:#2b6cb0;'>{s_str}</td><td class='td-info'><b>00:00</b></td><td colspan='36' class='td-trad text-center'>Did Not Play</td></tr>"
+                html_tables += f"<tr><td class='td-info'><img src='{foto}' class='player-photo'></td><td class='td-info player-name'>{player}</td><td class='td-info font-bold text-blue' style='font-size:11px;'>{role}</td><td class='td-info'><span style='font-size:10px;color:#fff;background:#718096;padding:2px 5px;border-radius:3px;font-weight:bold;text-transform:uppercase;white-space:nowrap;'>{pos}</span></td><td class='td-info font-bold' style='color:#2b6cb0;'>{s_str}</td><td class='td-info'><b>00:00</b></td><td colspan='36' class='td-trad text-center'>Did Not Play</td></tr>"
                 continue
             pm_str  = f"+{p['pm']}" if p['pm']>0 else str(p['pm'])
             pm_class = "text-green" if p['pm']>0 else ("text-red" if p['pm']<0 else "")
@@ -689,7 +706,7 @@ def generar_html_boxscore(ruta_box_clean, ruta_pbp_clean, match_id, equipo_local
             fg2_pct = (p['fg2m']/p['fg2a']*100) if p['fg2a']>0 else 0
             fg3_pct = (p['fg3m']/p['fg3a']*100) if p['fg3a']>0 else 0
             ft_pct  = (p['ftm']/p['fta']*100)   if p['fta']>0  else 0
-            html_tables += f"<tr><td class='td-info'><img src='{foto}' class='player-photo'></td><td class='td-info player-name'>{player}</td><td class='td-info font-bold text-blue' style='font-size:11px;'>{role}</td><td class='td-info text-gray' style='font-size:11px;font-weight:bold;'>{pos}</td><td class='td-info font-bold' style='color:#2b6cb0;'>{s_str}</td><td class='td-info'><b>{mins:02d}:{secs:02d}</b></td><td class='td-trad font-bold text-blue'>{int(p['pts'])}</td><td class='td-trad font-bold {pir_class}'>{int(p['pir'])}</td><td class='td-trad'>{int(p['orb'])}</td><td class='td-trad'>{int(p['drb'])}</td><td class='td-trad font-bold'>{int(p['trb'])}</td><td class='td-trad'>{int(p['ast'])}</td><td class='td-trad text-green'>{int(p['stl'])}</td><td class='td-trad text-red'>{int(p['tov'])}</td><td class='td-trad'>{int(p['blk'])}</td><td class='td-trad text-gray'>{int(p['pfd'])}</td><td class='td-trad text-gray'>{int(p['pf'])}</td><td class='td-trad font-bold {pm_class}'>{pm_str}</td><td class='td-shoot font-bold'>{int(p['fg2m'])}</td><td class='td-shoot text-gray'>{int(p['fg2a'])}</td><td class='td-shoot'>{fg2_pct:.0f}%</td><td class='td-shoot font-bold'>{int(p['fg3m'])}</td><td class='td-shoot text-gray'>{int(p['fg3a'])}</td><td class='td-shoot'>{fg3_pct:.0f}%</td><td class='td-shoot font-bold'>{int(p['ftm'])}</td><td class='td-shoot text-gray'>{int(p['fta'])}</td><td class='td-shoot'>{ft_pct:.0f}%</td><td class='td-adv font-bold'>{gmsc:.1f}</td><td class='td-adv'>{ts_pct:.1f}%</td><td class='td-adv'>{efg_pct:.1f}%</td><td class='td-adv text-gray'>{par3:.1f}%</td><td class='td-adv text-gray'>{ftr:.1f}%</td><td class='td-adv font-bold text-blue'>{usg_pct:.1f}%</td><td class='td-adv'>{orb_pct:.1f}%</td><td class='td-adv'>{drb_pct:.1f}%</td><td class='td-adv text-gray'>{trb_pct:.1f}%</td><td class='td-adv'>{ast_pct:.1f}%</td><td class='td-adv'>{stl_pct:.1f}%</td><td class='td-adv'>{blk_pct:.1f}%</td><td class='td-adv'>{tov_pct:.1f}%</td><td class='td-adv font-bold'>{ppp:.2f}</td><td class='td-adv font-bold'>{pps:.2f}</td></tr>"
+            html_tables += f"<tr><td class='td-info'><img src='{foto}' class='player-photo'></td><td class='td-info player-name'>{player}</td><td class='td-info font-bold text-blue' style='font-size:11px;'>{role}</td><td class='td-info'><span style='font-size:10px;color:#fff;background:#718096;padding:2px 5px;border-radius:3px;font-weight:bold;text-transform:uppercase;white-space:nowrap;'>{pos}</span></td><td class='td-info font-bold' style='color:#2b6cb0;'>{s_str}</td><td class='td-info'><b>{mins:02d}:{secs:02d}</b></td><td class='td-trad font-bold text-blue'>{int(p['pts'])}</td><td class='td-trad font-bold {pir_class}'>{int(p['pir'])}</td><td class='td-trad'>{int(p['orb'])}</td><td class='td-trad'>{int(p['drb'])}</td><td class='td-trad font-bold'>{int(p['trb'])}</td><td class='td-trad'>{int(p['ast'])}</td><td class='td-trad text-green'>{int(p['stl'])}</td><td class='td-trad text-red'>{int(p['tov'])}</td><td class='td-trad'>{int(p['blk'])}</td><td class='td-trad text-gray'>{int(p['pfd'])}</td><td class='td-trad text-gray'>{int(p['pf'])}</td><td class='td-trad font-bold {pm_class}'>{pm_str}</td><td class='td-shoot font-bold'>{int(p['fg2m'])}</td><td class='td-shoot text-gray'>{int(p['fg2a'])}</td><td class='td-shoot'>{fg2_pct:.0f}%</td><td class='td-shoot font-bold'>{int(p['fg3m'])}</td><td class='td-shoot text-gray'>{int(p['fg3a'])}</td><td class='td-shoot'>{fg3_pct:.0f}%</td><td class='td-shoot font-bold'>{int(p['ftm'])}</td><td class='td-shoot text-gray'>{int(p['fta'])}</td><td class='td-shoot'>{ft_pct:.0f}%</td><td class='td-adv font-bold'>{gmsc:.1f}</td><td class='td-adv'>{ts_pct:.1f}%</td><td class='td-adv'>{efg_pct:.1f}%</td><td class='td-adv text-gray'>{par3:.1f}%</td><td class='td-adv text-gray'>{ftr:.1f}%</td><td class='td-adv font-bold text-blue'>{usg_pct:.1f}%</td><td class='td-adv'>{orb_pct:.1f}%</td><td class='td-adv'>{drb_pct:.1f}%</td><td class='td-adv text-gray'>{trb_pct:.1f}%</td><td class='td-adv'>{ast_pct:.1f}%</td><td class='td-adv'>{stl_pct:.1f}%</td><td class='td-adv'>{blk_pct:.1f}%</td><td class='td-adv'>{tov_pct:.1f}%</td><td class='td-adv font-bold'>{ppp:.2f}</td><td class='td-adv font-bold'>{pps:.2f}</td></tr>"
 
         tm_mins,tm_secs = divmod(int(tm_MIN_sec/5),60)
         tm_ts_denom = 2*(tm_FGA+0.44*t_tot['FTA'])
@@ -1094,11 +1111,11 @@ def HTML_BOXSCORE_AGREGADO_M14(df_all_box, eq_objetivo, context_str, team_games_
     html_tables += f"""<h2 class="team-section-title">{eq_objetivo}</h2>
     <div class="table-container"><table>
     <thead class="group-headers"><tr>
-        <th colspan="5" class="bg-info">INFO</th><th colspan="13" class="bg-trad">TRADITIONAL (PER GAME)</th>
+        <th colspan="6" class="bg-info">INFO</th><th colspan="13" class="bg-trad">TRADITIONAL (PER GAME)</th>
         <th colspan="9" class="bg-shoot">SHOOTING (PER GAME)</th><th colspan="15" class="bg-adv">ADVANCED METRICS (AGGREGATED)</th>
     </tr></thead>
     <thead class="col-headers"><tr>
-        <th>PIC</th><th>PLAYER</th><th>ROLE</th><th>GP</th><th>GS</th>
+        <th>PIC</th><th>PLAYER</th><th>ROLE</th><th>POS</th><th>GP</th><th>GS</th>
         <th>MIN</th><th>PTS</th><th>PIR</th><th>ORB</th><th>DRB</th><th>TRB</th>
         <th>AST</th><th>STL</th><th>TOV</th><th>BLK</th><th>PFD</th><th>PF</th><th>+/-</th>
         <th>2PM</th><th>2PA</th><th>2P%</th><th>3PM</th><th>3PA</th><th>3P%</th>
@@ -1116,13 +1133,17 @@ def HTML_BOXSCORE_AGREGADO_M14(df_all_box, eq_objetivo, context_str, team_games_
         full_name    = p_photo_data.get("PLAYER_NAME", map_name_m14.get(pid, p.get('Player','Unknown')))
         player       = get_short_name(full_name)
         role         = map_role_m14.get(pid, "N/A")
+        # Prioridad posición: JSON curado → FILE_ROLES → N/A
+        pos_json  = custom_photos_m14.get(pid, {}).get('POSITION', '')
+        pos_roles = map_pos_m14.get(pid, '')
+        pos       = pos_json if pos_json and pos_json not in ['','nan','None','N/A','SF'] else (pos_roles if pos_roles and pos_roles not in ['','nan','None','N/A','SF'] else 'N/A')
         gp           = int(p['GP']) if int(p['GP']) > 0 else 1
         gs           = int(p['Starter'])
         mins_pg      = p['Min_Sec_Num'] / gp
         mins, secs   = divmod(int(mins_pg), 60)
 
         if p['Min_Sec_Num'] <= 0:
-            html_tables += f"<tr><td class='td-info'><img src='{foto}' class='player-photo'></td><td class='td-info player-name'>{player}</td><td class='td-info font-bold text-blue' style='font-size:11px;'>{role}</td><td class='td-info font-bold text-gray'>{gp}</td><td class='td-info font-bold text-blue'>{gs}</td><td class='td-info'><b>00:00</b></td><td colspan='36' class='td-trad text-center'>Did Not Play</td></tr>"
+            html_tables += f"<tr><td class='td-info'><img src='{foto}' class='player-photo'></td><td class='td-info player-name'>{player}</td><td class='td-info font-bold text-blue' style='font-size:11px;'>{role}</td><td class='td-info'><span style='font-size:10px;color:#fff;background:#718096;padding:2px 5px;border-radius:3px;font-weight:bold;text-transform:uppercase;white-space:nowrap;'>{pos}</span></td><td class='td-info font-bold text-gray'>{gp}</td><td class='td-info font-bold text-blue'>{gs}</td><td class='td-info'><b>00:00</b></td><td colspan='36' class='td-trad text-center'>Did Not Play</td></tr>"
             continue
 
         pm_pg    = p['+/-'] / gp
@@ -1162,6 +1183,7 @@ def HTML_BOXSCORE_AGREGADO_M14(df_all_box, eq_objetivo, context_str, team_games_
             f"<tr><td class='td-info'><img src='{foto}' class='player-photo'></td>"
             f"<td class='td-info player-name'>{player}</td>"
             f"<td class='td-info font-bold text-blue' style='font-size:11px;'>{role}</td>"
+            f"<td class='td-info'><span style='font-size:10px;color:#fff;background:#718096;padding:2px 5px;border-radius:3px;font-weight:bold;text-transform:uppercase;white-space:nowrap;'>{pos}</span></td>"
             f"<td class='td-info font-bold text-gray'>{gp}</td><td class='td-info font-bold text-blue'>{gs}</td>"
             f"<td class='td-info'><b>{mins:02d}:{secs:02d}</b></td>"
             f"<td class='td-trad font-bold text-blue'>{p['PTS']/gp:.1f}</td>"
@@ -1194,7 +1216,7 @@ def HTML_BOXSCORE_AGREGADO_M14(df_all_box, eq_objetivo, context_str, team_games_
     tm_ts_denom = 2*(tm_FGA+0.44*t_tot['FTA'])
 
     html_tables += (
-        f"<tr class='total-row'><td colspan='5' class='td-info' style='text-align:right;padding-right:15px;'><b>TEAM AVERAGES</b></td>"
+        f"<tr class='total-row'><td colspan='6' class='td-info' style='text-align:right;padding-right:15px;'><b>TEAM AVERAGES</b></td>"
         f"<td class='td-info'><b>{tm_mins:02d}:{tm_secs:02d}</b></td>"
         f"<td class='td-trad font-bold text-blue'>{t_tot['PTS']/team_gp:.1f}</td>"
         f"<td class='td-trad font-bold'>{t_tot['PIR']/team_gp:.1f}</td>"
