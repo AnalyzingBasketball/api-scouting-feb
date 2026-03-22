@@ -31,7 +31,7 @@ def get_html_cache(key: str):
             if not row: return None
             age = (pd.Timestamp.utcnow() - pd.Timestamp(row.created_at)).total_seconds()
             return row.html if age < 86400 else None
-    except: return None
+    except Exception: return None
 
 def set_html_cache(key: str, html: str):
     """Guarda HTML en BD. Silencioso si falla."""
@@ -45,7 +45,7 @@ def set_html_cache(key: str, html: str):
                 SET html = EXCLUDED.html, created_at = NOW()
             """), {"k": key, "h": html})
             conn.commit()
-    except: pass
+    except Exception: pass
 
 # ==============================================================================
 # 1. CONFIGURACIÓN Y RUTAS GLOBALES
@@ -106,14 +106,14 @@ def get_short_name(full_name):
 def get_image_base64(path):
     try:
         with open(path, "rb") as img_file: return base64.b64encode(img_file.read()).decode('utf-8')
-    except: return ""
+    except Exception: return ""
 
 def parse_min(val):
     if pd.isna(val): return 0
     if isinstance(val, str):
         if ':' in val: m, s = val.split(':'); return int(m)*60 + int(s)
         try: return float(val) * 60
-        except: return 0
+        except Exception: return 0
     return float(val) * 60
 
 def safe_get(row, col_names, default=0):
@@ -128,7 +128,7 @@ def parse_shooting(row, prefix_made, prefix_att, prefix_combined):
         c = str(safe_get(row, prefix_combined, ""))
         if '/' in c:
             try: m = float(c.split('/')[0]); a = float(c.split('/')[1])
-            except: pass
+            except Exception: pass
     return m, a
 
 def match_team_name(target_name, available_names):
@@ -213,7 +213,7 @@ def extraer_diccionario_logos():
                 diccionario[a.text.strip()] = url_logo
         with open(FILE_LOGOS, "w", encoding="utf-8") as f:
             json.dump(diccionario, f, ensure_ascii=False, indent=4)
-    except: pass
+    except Exception: pass
 
 def construir_calendario_maestro():
     try:
@@ -241,7 +241,7 @@ def construir_calendario_maestro():
                         "resultado": a_p.get_text(strip=True)
                     })
         pd.DataFrame(datos).drop_duplicates(subset=['match_id']).to_csv(FILE_CALENDAR, index=False, encoding='utf-8-sig')
-    except: pass
+    except Exception: pass
 
 def obtener_partidos_jornada(jornada_id):
     res  = requests.get("https://www.feb.es/competiciones/calendario/primerafeb/1/2025", headers=HEADERS_WEB)
@@ -296,7 +296,7 @@ def buscar_partido_en_csv(equipo: str, jornada: int):
         equipo_visitante = away_rows.iloc[0]  if not away_rows.empty else "Visitante"
         return {"match_id": match_id, "equipo_local": equipo_local,
                 "equipo_visitante": equipo_visitante, "jugado": True, "fecha": f"Jornada {jornada}"}
-    except:
+    except Exception:
         return None
 
 # ── FALLBACK: scraping feb.es (solo para jornadas no en el CSV) ───────────────
@@ -326,7 +326,7 @@ def obtener_partido_por_scraping(equipo: str, jornada: int):
                 jugado    = "-" in resultado and any(c.isdigit() for c in resultado)
                 return {"match_id": match_id, "equipo_local": local_name,
                         "equipo_visitante": visit_name, "jugado": jugado, "fecha": fecha_partido}
-    except: pass
+    except Exception: pass
     return None
 
 def extraer_partido_api(match_id):
@@ -342,7 +342,7 @@ def extraer_partido_api(match_id):
         soup    = BeautifulSoup(res_web.text, 'html.parser')
         token   = soup.find('input', id='_ctl0_token')['value'].strip()
         session.headers.update({"Authorization": f"Bearer {token}"})
-    except: return False
+    except Exception: return False
     base_url_api = "https://intrafeb.feb.es/LiveStats.API/api/v1"
     try:
         if not os.path.exists(ruta_pbp):
@@ -358,7 +358,7 @@ def extraer_partido_api(match_id):
                 for p in t.get('PLAYER', []): p['team_name'] = t_name; box_flat.append(p)
             pd.DataFrame(box_flat).to_csv(ruta_box, index=False, encoding='utf-8-sig')
         return True
-    except: return False
+    except Exception: return False
 
 def limpiar_y_avanzadas(match_id, local, visitante, jornada):
     jornada_str    = f"Jornada-{jornada}"
@@ -465,7 +465,7 @@ def generar_html_quintetos(ruta_pbp_clean, ruta_box_clean, match_id, equipo_loca
                 raw_photos = json.load(f)
             for pid_k, info in raw_photos.items():
                 custom_photos_m12[str(pid_k).strip().replace('.0','')] = info
-    except: pass
+    except Exception: pass
 
     dict_roles = {}
     dict_pos   = {}
@@ -480,7 +480,7 @@ def generar_html_quintetos(ruta_pbp_clean, ruta_box_clean, match_id, equipo_loca
 
     try:
         with open(FILE_LOGOS, "r", encoding="utf-8") as f: diccionario_escudos = json.load(f)
-    except: diccionario_escudos = {}
+    except Exception: diccionario_escudos = {}
 
     def get_escudo(eq_name):
         for k, v in diccionario_escudos.items():
@@ -683,7 +683,7 @@ def generar_html_boxscore(ruta_box_clean, ruta_pbp_clean, match_id, equipo_local
 
     try:
         with open(FILE_LOGOS, "r", encoding="utf-8") as f: diccionario_escudos = json.load(f)
-    except: diccionario_escudos = {}
+    except Exception: diccionario_escudos = {}
 
     def get_escudo(eq_name):
         for k, v in diccionario_escudos.items():
@@ -730,7 +730,7 @@ def generar_html_boxscore(ruta_box_clean, ruta_pbp_clean, match_id, equipo_local
             ast = float(safe_get(row,['AST'])); stl = float(safe_get(row,['STL'])); tov = float(safe_get(row,['TOV']))
             blk = float(safe_get(row,['BLK'])); pfd = float(safe_get(row,['FD']));  pf  = float(safe_get(row,['PF']))
             try: pm = int(float(str(safe_get(row,['+/-'],0)).replace('+','')))
-            except: pm = 0
+            except Exception: pm = 0
             t_tot['MIN_sec']+=min_sec; t_tot['PTS']+=pts; t_tot['PIR']+=pir
             t_tot['FGM2']+=fg2m; t_tot['FGA2']+=fg2a; t_tot['FGM3']+=fg3m; t_tot['FGA3']+=fg3a
             t_tot['FTM']+=ftm; t_tot['FTA']+=fta; t_tot['ORB']+=orb; t_tot['DRB']+=drb; t_tot['TRB']+=trb
@@ -846,6 +846,8 @@ def cargar_datos_m13():
     global map_role_m13, map_pos_m13, map_name_m13, map_efg_m13, map_ts_m13, map_tov_m13
     global map_orb_m13, map_ftr_m13, map_usg_m13, custom_photos_m13, dicc_logos_m13
     map_role_m13.clear(); map_pos_m13.clear(); map_name_m13.clear()
+    map_efg_m13.clear();  map_ts_m13.clear();  map_tov_m13.clear()
+    map_orb_m13.clear();  map_ftr_m13.clear(); map_usg_m13.clear()
     try:
         if os.path.exists(FILE_ROLES):
             df_roles = pd.read_csv(FILE_ROLES)
@@ -861,15 +863,15 @@ def cargar_datos_m13():
                 if 'ORB%' in df_roles.columns: map_orb_m13[pid] = r.get('ORB%', 0)
                 if 'FTr'  in df_roles.columns: map_ftr_m13[pid] = r.get('FTr',  0)
                 if 'USG%' in df_roles.columns: map_usg_m13[pid] = r.get('USG%', 0)
-    except: pass
+    except Exception: pass
     try:
         if os.path.exists(FILE_PHOTOS):
             with open(FILE_PHOTOS, "r", encoding="utf-8") as f: custom_photos_m13 = json.load(f)
-    except: custom_photos_m13 = {}
+    except Exception: custom_photos_m13 = {}
     try:
         if os.path.exists(FILE_LOGOS):
             with open(FILE_LOGOS, "r", encoding="utf-8") as f: dicc_logos_m13 = json.load(f)
-    except: dicc_logos_m13 = {}
+    except Exception: dicc_logos_m13 = {}
 
 def create_signatures_m13(row):
     players = [safe_id(row['P1_ID']), safe_id(row['P2_ID']), safe_id(row['P3_ID']), safe_id(row['P4_ID']), safe_id(row['P5_ID'])]
@@ -1042,15 +1044,15 @@ def cargar_datos_m14():
                 if 'ORB%' in df_roles.columns: map_orb_m14[pid] = r.get('ORB%', 0)
                 if 'FTr'  in df_roles.columns: map_ftr_m14[pid] = r.get('FTr',  0)
                 if 'USG%' in df_roles.columns: map_usg_m14[pid] = r.get('USG%', 0)
-    except: pass
+    except Exception: pass
     try:
         if os.path.exists(FILE_PHOTOS):
             with open(FILE_PHOTOS, "r", encoding="utf-8") as f: custom_photos_m14 = json.load(f)
-    except: custom_photos_m14 = {}
+    except Exception: custom_photos_m14 = {}
     try:
         if os.path.exists(FILE_LOGOS):
             with open(FILE_LOGOS, "r", encoding="utf-8") as f: dicc_logos_m14 = json.load(f)
-    except: dicc_logos_m14 = {}
+    except Exception: dicc_logos_m14 = {}
 
 def get_classic_order_m14(pid):
     p_data  = custom_photos_m14.get(str(pid), {})
@@ -1058,7 +1060,7 @@ def get_classic_order_m14(pid):
     order   = p_data.get("POS_ORDER")
     if pd.notna(order) and str(order).strip() != "":
         try: return float(order)
-        except: pass
+        except Exception: pass
     return get_classic_pos_order(pos_raw)
 
 def create_signatures_m14(row):
@@ -1409,7 +1411,7 @@ def generar_html_liga_lineups(m_filt: int = 15):
         order   = p_data.get("POS_ORDER")
         if pd.notna(order) and str(order).strip() != "":
             try: return float(order)
-            except: pass
+            except Exception: pass
         return get_classic_pos_order(pos_raw)
 
     def render_table_m16(df_subset):
@@ -1537,7 +1539,7 @@ def generar_html_liga_lineups(m_filt: int = 15):
 # API REST — FastAPI
 # ==============================================================================
 app = FastAPI()
-app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_credentials=True, allow_methods=["*"], allow_headers=["*"])
+app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_credentials=False, allow_methods=["GET"], allow_headers=["*"])
 
 # ── HEALTH ENDPOINT — para keep-alive y UptimeRobot ───────────────────────────
 @app.get("/health")

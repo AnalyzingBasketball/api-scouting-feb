@@ -112,14 +112,14 @@ def to_float(val):
     try:
         if val is None or str(val).strip() == "": return 0.0
         return round(float(str(val).replace(',', '.')), 1)
-    except: return 0.0
+    except Exception: return 0.0
 
 def safe_div(n, d, default=0.0):
     try:
         den = float(d)
         if den == 0.0 or pd.isna(den): return default
         return round(float(n) / den, 1)
-    except: return default
+    except Exception: return default
 
 def parse_minutos(time_str):
     if pd.isna(time_str) or not isinstance(time_str, str): return 0.0
@@ -128,7 +128,7 @@ def parse_minutos(time_str):
             m, s = time_str.split(':')
             return round(float(m) + (float(s) / 60.0), 1)
         return round(float(str(time_str).replace(',', '.')), 1)
-    except: return 0.0
+    except Exception: return 0.0
 
 def get_5_players_flat(player_ids_set, match_roster_dict):
     pos_order    = {'PG': 1, 'SG': 2, 'SF': 3, 'PF': 4, 'C': 5}
@@ -487,54 +487,55 @@ def procesar_estadisticas_acumuladas():
 
     # E) APPEND ACUMULATIVO
     def append_and_save(new_data_list, filepath, tabla=None, conflict_cols=None):
-    if not new_data_list: return
-    df_new = pd.concat(new_data_list, ignore_index=True) \
-             if isinstance(new_data_list[0], pd.DataFrame) \
-             else pd.DataFrame(new_data_list)
+        if not new_data_list: return
+        df_new = pd.concat(new_data_list, ignore_index=True) \
+                 if isinstance(new_data_list[0], pd.DataFrame) \
+                 else pd.DataFrame(new_data_list)
 
-    # ── Escritura en Supabase ─────────────────────────────────────────────────
-    if db_ok() and tabla:
-        try:
-            df_db = df_new.copy()
-            df_db.columns = df_db.columns.str.lower()
-            staging = f"{tabla}_staging"
-            df_db.to_sql(staging, _engine, if_exists='replace',
-                         index=False, method='multi', chunksize=200)
-            if conflict_cols:
-                conflict_str = ", ".join(conflict_cols)
-                with _engine.connect() as conn:
-                    conn.execute(sql_text(f"""
-                        INSERT INTO {tabla}
-                        SELECT * FROM {staging}
-                        ON CONFLICT ({conflict_str}) DO NOTHING;
-                        DROP TABLE IF EXISTS {staging};
-                    """))
-                    conn.commit()
-            else:
-                with _engine.connect() as conn:
-                    conn.execute(sql_text(f"""
-                        INSERT INTO {tabla} SELECT * FROM {staging};
-                        DROP TABLE IF EXISTS {staging};
-                    """))
-                    conn.commit()
-            print(f"  ✅ BD actualizada: tabla '{tabla}'")
-        except Exception as e:
-            print(f"  ⚠️ Error escribiendo en BD ({tabla}): {e}")
+        # ── Escritura en Supabase ─────────────────────────────────────────────
+        if db_ok() and tabla:
+            try:
+                df_db = df_new.copy()
+                df_db.columns = df_db.columns.str.lower()
+                staging = f"{tabla}_staging"
+                df_db.to_sql(staging, _engine, if_exists='replace',
+                             index=False, method='multi', chunksize=200)
+                if conflict_cols:
+                    conflict_str = ", ".join(conflict_cols)
+                    with _engine.connect() as conn:
+                        conn.execute(sql_text(f"""
+                            INSERT INTO {tabla}
+                            SELECT * FROM {staging}
+                            ON CONFLICT ({conflict_str}) DO NOTHING;
+                            DROP TABLE IF EXISTS {staging};
+                        """))
+                        conn.commit()
+                else:
+                    with _engine.connect() as conn:
+                        conn.execute(sql_text(f"""
+                            INSERT INTO {tabla} SELECT * FROM {staging};
+                            DROP TABLE IF EXISTS {staging};
+                        """))
+                        conn.commit()
+                print(f"  ✅ BD actualizada: tabla '{tabla}'")
+            except Exception as e:
+                print(f"  ⚠️ Error escribiendo en BD ({tabla}): {e}")
 
-    # ── Escritura CSV (backup) ────────────────────────────────────────────────
-    if os.path.exists(filepath):
-        try:
-            df_old   = pd.read_csv(filepath, dtype=str)
-            df_final = pd.concat([df_old, df_new.astype(str)], ignore_index=True)
-        except: df_final = df_new
-    else:
-        df_final = df_new
-    df_final['ROUND_NUM'] = pd.to_numeric(
-        df_final['ROUND'], errors='coerce').fillna(0).astype(int)
-    df_final = df_final.sort_values(['ROUND_NUM','MATCHID'])\
-                       .drop(columns=['ROUND_NUM'])
-    df_final.to_csv(filepath, index=False, encoding='utf-8-sig',
-                    float_format='%.1f')
+        # ── Escritura CSV (backup) ────────────────────────────────────────────
+        if os.path.exists(filepath):
+            try:
+                df_old   = pd.read_csv(filepath, dtype=str)
+                df_final = pd.concat([df_old, df_new.astype(str)], ignore_index=True)
+            except Exception:
+                df_final = df_new
+        else:
+            df_final = df_new
+        df_final['ROUND_NUM'] = pd.to_numeric(
+            df_final['ROUND'], errors='coerce').fillna(0).astype(int)
+        df_final = df_final.sort_values(['ROUND_NUM','MATCHID'])\
+                           .drop(columns=['ROUND_NUM'])
+        df_final.to_csv(filepath, index=False, encoding='utf-8-sig',
+                        float_format='%.1f')
 
     if all_boxscores:
         append_and_save(all_boxscores, OUT_BOXSCORE,
