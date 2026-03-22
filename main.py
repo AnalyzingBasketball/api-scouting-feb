@@ -47,6 +47,25 @@ def set_html_cache(key: str, html: str):
             conn.commit()
     except Exception: pass
 
+# Mapa de tabla Supabase → CSV fallback
+_TABLE_CSV_MAP = {
+    'boxscore': 'BOXSCORE_PRIMERAFEB_2526.csv',
+    'lineups':  'LINEUPS_PRIMERAFEB_2526.csv',
+}
+
+def read_table(tabla: str, csv_path: str = None) -> pd.DataFrame:
+    """Lee datos de Supabase si hay conexión, si no de CSV. Columnas en MAYÚSCULAS."""
+    if _engine:
+        try:
+            df = pd.read_sql(f"SELECT * FROM {tabla}", _engine)
+            df.columns = df.columns.str.upper()
+            return df
+        except Exception as e:
+            print(f"⚠️ Error leyendo {tabla} de BD, fallback a CSV: {e}")
+    if csv_path and os.path.exists(csv_path):
+        return pd.read_csv(csv_path)
+    return pd.DataFrame()
+
 # ==============================================================================
 # 1. CONFIGURACIÓN Y RUTAS GLOBALES
 # ==============================================================================
@@ -280,10 +299,10 @@ def buscar_partido_en_csv(equipo: str, jornada: int):
     Busca el partido de un equipo en una jornada usando el BOXSCORE maestro.
     Retorna None si la jornada no está en el CSV (partido futuro).
     """
-    if not os.path.exists(FILE_MASTER_BOXSCORE):
-        return None
     try:
-        df = pd.read_csv(FILE_MASTER_BOXSCORE)
+        df = read_table('boxscore', FILE_MASTER_BOXSCORE)
+        if df.empty:
+            return None
         df['TEAM'] = df['TEAM'].replace(TEAM_FIXES_GLOBAL)
         fila = df[(df['TEAM'] == equipo) & (df['ROUND'] == jornada)][['MATCHID','LOCATION']].drop_duplicates()
         if fila.empty:
@@ -881,11 +900,11 @@ def create_signatures_m13(row):
     return pd.Series([" / ".join(roles), "-".join(players)])
 
 def generar_html_splits(s_rnd, e_rnd, eq, m_filt):
-    if not os.path.exists(FILE_LINEUPS):
-        raise HTTPException(status_code=404, detail="Archivo LINEUPS maestro no encontrado en el servidor.")
     cargar_datos_m13()
 
-    df_lineups_master = pd.read_csv(FILE_LINEUPS)
+    df_lineups_master = read_table('lineups', FILE_LINEUPS)
+    if df_lineups_master.empty:
+        raise HTTPException(status_code=404, detail="No hay datos de lineups disponibles.")
     df_lineups_master['TEAM'] = df_lineups_master.get('TEAM', pd.Series()).replace(TEAM_FIXES_GLOBAL)
     for col in ['P1_ID','P2_ID','P3_ID','P4_ID','P5_ID']:
         if col not in df_lineups_master.columns: df_lineups_master[col] = ""
@@ -1380,9 +1399,6 @@ def HTML_BOXSCORE_AGREGADO_M14(df_all_box, eq_objetivo, context_str, team_games_
 # MÓDULO 16: MEGA-INFORME LIGA COMPLETA
 # ==============================================================================
 def generar_html_liga_lineups(m_filt: int = 15):
-    if not os.path.exists(FILE_LINEUPS):
-        raise HTTPException(status_code=404, detail="Archivo LINEUPS maestro no encontrado en el servidor.")
-
     # ── CACHÉ 24H: devolver HTML cacheado de BD si existe ──
     cache_key = f"liga_lineups_m{m_filt}"
     cached    = get_html_cache(cache_key)
@@ -1390,7 +1406,9 @@ def generar_html_liga_lineups(m_filt: int = 15):
 
     cargar_datos_m13()
 
-    df_lineups = pd.read_csv(FILE_LINEUPS)
+    df_lineups = read_table('lineups', FILE_LINEUPS)
+    if df_lineups.empty:
+        raise HTTPException(status_code=404, detail="No hay datos de lineups disponibles.")
     df_lineups['TEAM'] = df_lineups.get('TEAM', pd.Series()).replace(TEAM_FIXES_GLOBAL)
     for col in ['P1_ID','P2_ID','P3_ID','P4_ID','P5_ID']:
         if col not in df_lineups.columns: df_lineups[col] = ""
@@ -1591,11 +1609,9 @@ def splits_api(s_rnd: int = 1, e_rnd: int = 22, eq: str = "MOVISTAR ESTUDIANTES"
 def generar_contextual(eq: str = "MOVISTAR ESTUDIANTES", venue: str = "ALL", n_games: int = 3, m_filt: int = 10, tipo_reporte: str = "quintetos"):
     cargar_datos_m14()
 
-    FILE_MASTER_BOXSCORE = os.path.join(DATA_DIR, "BOXSCORE_PRIMERAFEB_2526.csv")
-    if not os.path.exists(FILE_MASTER_BOXSCORE):
-        raise HTTPException(status_code=404, detail="Archivo BOXSCORE_PRIMERAFEB_2526.csv no encontrado.")
-
-    df_master = pd.read_csv(FILE_MASTER_BOXSCORE)
+    df_master = read_table('boxscore', os.path.join(DATA_DIR, "BOXSCORE_PRIMERAFEB_2526.csv"))
+    if df_master.empty:
+        raise HTTPException(status_code=404, detail="No hay datos de boxscore disponibles.")
     df_master['TEAM'] = df_master['TEAM'].replace(TEAM_FIXES_GLOBAL)
 
     df_team_games = df_master[df_master['TEAM'] == eq][['MATCHID','ROUND','LOCATION']].drop_duplicates()
@@ -1619,10 +1635,9 @@ def generar_contextual(eq: str = "MOVISTAR ESTUDIANTES", venue: str = "ALL", n_g
 
     # ── RAMA QUINTETOS ──────────────────────────────────────────────────────────
     if tipo_reporte.lower() == "quintetos":
-        if not os.path.exists(FILE_LINEUPS):
-            raise HTTPException(status_code=404, detail="Archivo LINEUPS no encontrado en el servidor.")
-
-        df_lineups_master = pd.read_csv(FILE_LINEUPS)
+        df_lineups_master = read_table('lineups', FILE_LINEUPS)
+        if df_lineups_master.empty:
+            raise HTTPException(status_code=404, detail="No hay datos de lineups disponibles.")
         df_lineups_master['TEAM'] = df_lineups_master.get('TEAM', pd.Series()).replace(TEAM_FIXES_GLOBAL)
         for col in ['P1_ID','P2_ID','P3_ID','P4_ID','P5_ID']:
             if col not in df_lineups_master.columns: df_lineups_master[col] = ""
