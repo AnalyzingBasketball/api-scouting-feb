@@ -872,6 +872,104 @@ def generar_html_boxscore(ruta_box_clean, ruta_pbp_clean, match_id, equipo_local
     return ruta_final
 
 # ==============================================================================
+# FUNCIONES COMPARTIDAS PARA MÓDULOS 13/14/16
+# ==============================================================================
+def _load_roles_data(map_role, map_pos, map_name, map_efg, map_ts, map_tov, map_orb, map_ftr, map_usg):
+    """Carga FILE_ROLES en los diccionarios proporcionados (compartida por M13/M14)."""
+    map_role.clear(); map_pos.clear(); map_name.clear()
+    map_efg.clear();  map_ts.clear();  map_tov.clear()
+    map_orb.clear();  map_ftr.clear(); map_usg.clear()
+    try:
+        if os.path.exists(FILE_ROLES):
+            df_roles = pd.read_csv(FILE_ROLES)
+            df_roles['TEAM'] = df_roles.get('TEAM', pd.Series()).replace(TEAM_FIXES_GLOBAL)
+            for _, r in df_roles.iterrows():
+                pid = safe_id(str(r.get('PLAYER_ID', '')))
+                map_role[pid] = str(r.get('ROLE_NAME', 'N/A'))
+                map_pos[pid]  = str(r.get('POSITION',  'N/A'))
+                map_name[pid] = str(r.get('PLAYER_NAME','Unknown'))
+                if 'eFG%' in df_roles.columns: map_efg[pid] = r.get('eFG%', 0)
+                if 'TS%'  in df_roles.columns: map_ts[pid]  = r.get('TS%',  0)
+                if 'TOV%' in df_roles.columns: map_tov[pid] = r.get('TOV%', 0)
+                if 'ORB%' in df_roles.columns: map_orb[pid] = r.get('ORB%', 0)
+                if 'FTr'  in df_roles.columns: map_ftr[pid] = r.get('FTr',  0)
+                if 'USG%' in df_roles.columns: map_usg[pid] = r.get('USG%', 0)
+    except Exception: pass
+
+def _load_photos_logos(photos_dict, logos_dict):
+    """Carga FILE_PHOTOS y FILE_LOGOS (compartida por M13/M14)."""
+    try:
+        if os.path.exists(FILE_PHOTOS):
+            with open(FILE_PHOTOS, "r", encoding="utf-8") as f: photos_dict.update(json.load(f))
+    except Exception: pass
+    try:
+        if os.path.exists(FILE_LOGOS):
+            with open(FILE_LOGOS, "r", encoding="utf-8") as f: logos_dict.update(json.load(f))
+    except Exception: pass
+
+def _create_signatures(row, role_map):
+    """Crea firma de arquetipo + lineup real (compartida por M13/M14/M16)."""
+    players = [safe_id(row['P1_ID']), safe_id(row['P2_ID']), safe_id(row['P3_ID']), safe_id(row['P4_ID']), safe_id(row['P5_ID'])]
+    roles   = [role_map.get(p, "Unknown") for p in players]
+    if "Unknown" in roles: return pd.Series(["Incomplete", "Incomplete"])
+    roles.sort(); players.sort()
+    return pd.Series([" / ".join(roles), "-".join(players)])
+
+def _get_player_order(pid, photos_map, pos_map):
+    """Orden de posición clásica para sorting (compartida por M14/M16)."""
+    p_data  = photos_map.get(str(pid), {})
+    pos_raw = p_data.get("POSITION", pos_map.get(str(pid), ""))
+    order   = p_data.get("POS_ORDER")
+    if pd.notna(order) and str(order).strip() != "":
+        try: return float(order)
+        except Exception: pass
+    return get_classic_pos_order(pos_raw)
+
+def _render_lineup_table(df_subset, photos_map, name_map, pos_map, role_map,
+                         efg_map, ts_map, tov_map, orb_map, ftr_map, usg_map,
+                         order_fn, th_style="style='background:#2c7a7b'",
+                         td_lineup="style='text-align:left;padding-left:15px;'",
+                         metric_cls="metric-big", role_fallback="Unknown Role"):
+    """Renderiza tabla HTML de lineups (compartida por M13/M14/M16)."""
+    t_html = f"""<div class='table-container'><table><thead><tr>
+        <th class='col-lineup'></th><th>TOTAL MIN</th><th>PTS /40</th><th>PA /40</th><th>NET RTG /40</th>
+        <th {th_style}>TS% *</th><th {th_style}>eFG% *</th><th {th_style}>TOV% *</th>
+        <th {th_style}>ORB% *</th><th {th_style}>FTr *</th><th {th_style}>USG% *</th>
+        </tr></thead><tbody>"""
+    for _, row in df_subset.iterrows():
+        pm_val      = row['NET_RATING']
+        color_class = "text-green" if pm_val > 0 else ("text-red" if pm_val < 0 else "")
+        sign        = "+" if pm_val > 0 else ""
+        p_ids       = row['REAL_LINEUP'].split("-")
+        p_ids.sort(key=order_fn)
+        cards_html  = ""
+        avg_efg = avg_ts = avg_tov = avg_orb = avg_ftr = avg_usg = count = 0
+        for pid in p_ids:
+            p_data     = photos_map.get(pid, {})
+            name_short = get_short_name(p_data.get("PLAYER_NAME", name_map.get(pid, "Unknown")))
+            pos        = p_data.get("POSITION", pos_map.get(pid, "N/A"))
+            if pd.isna(pos) or str(pos).strip() == "": pos = "N/A"
+            role       = role_map.get(pid, role_fallback)
+            foto_url   = p_data.get("PHOTO_URL", f"https://imagenes.feb.es/Foto.aspx?c={pid}")
+            cards_html += (f"<div class='player-card'><span class='player-role-label'>{role}</span>"
+                           f"<img src='{foto_url}' onerror=\"this.src='https://via.placeholder.com/50/cbd5e0/ffffff?text=+'\">"
+                           f"<br>{name_short}<br><span class='player-pos'>{pos}</span></div>")
+            if pid in efg_map:
+                avg_efg += efg_map.get(pid,0); avg_ts += ts_map.get(pid,0); avg_tov += tov_map.get(pid,0)
+                avg_orb += orb_map.get(pid,0); avg_ftr += ftr_map.get(pid,0); avg_usg += usg_map.get(pid,0); count += 1
+        f_ts  = f"{(avg_ts/count):.1f}%"  if count>0 else "N/A"; f_efg = f"{(avg_efg/count):.1f}%" if count>0 else "N/A"
+        f_tov = f"{(avg_tov/count):.1f}%" if count>0 else "N/A"; f_orb = f"{(avg_orb/count):.1f}%" if count>0 else "N/A"
+        f_ftr = f"{(avg_ftr/count):.3f}"  if count>0 else "N/A"; f_usg = f"{(avg_usg/count):.1f}%" if count>0 else "N/A"
+        t_html += (f"<tr><td {td_lineup}><div class='players-flex'>{cards_html}</div></td>"
+                   f"<td class='{metric_cls}'>{row['MINUTES']:.1f}</td><td class='{metric_cls} text-blue'>{row['PTS_40']:.1f}</td>"
+                   f"<td class='{metric_cls} text-red'>{row['PA_40']:.1f}</td><td class='metric-huge {color_class}'>{sign}{pm_val}</td>"
+                   f"<td class='metric-adv' style='color:#B22222'>{f_ts}</td><td class='metric-adv'>{f_efg}</td>"
+                   f"<td class='metric-adv'>{f_tov}</td><td class='metric-adv'>{f_orb}</td>"
+                   f"<td class='metric-adv'>{f_ftr}</td><td class='metric-adv'>{f_usg}</td></tr>")
+    t_html += "</tbody></table></div>"
+    return t_html
+
+# ==============================================================================
 # MÓDULO 13: MEMORIA Y FUNCIONES PARA TACTICAL SPLITS
 # ==============================================================================
 map_role_m13 = {}; map_pos_m13 = {}; map_name_m13 = {}
@@ -880,42 +978,13 @@ map_orb_m13 = {}; map_ftr_m13 = {}; map_usg_m13 = {}
 custom_photos_m13 = {}; dicc_logos_m13 = {}
 
 def cargar_datos_m13():
-    global map_role_m13, map_pos_m13, map_name_m13, map_efg_m13, map_ts_m13, map_tov_m13
-    global map_orb_m13, map_ftr_m13, map_usg_m13, custom_photos_m13, dicc_logos_m13
-    map_role_m13.clear(); map_pos_m13.clear(); map_name_m13.clear()
-    map_efg_m13.clear();  map_ts_m13.clear();  map_tov_m13.clear()
-    map_orb_m13.clear();  map_ftr_m13.clear(); map_usg_m13.clear()
-    try:
-        if os.path.exists(FILE_ROLES):
-            df_roles = pd.read_csv(FILE_ROLES)
-            df_roles['TEAM'] = df_roles.get('TEAM', pd.Series()).replace(TEAM_FIXES_GLOBAL)
-            for _, r in df_roles.iterrows():
-                pid = safe_id(str(r.get('PLAYER_ID', '')))
-                map_role_m13[pid] = str(r.get('ROLE_NAME', 'N/A'))
-                map_pos_m13[pid]  = str(r.get('POSITION',  'N/A'))
-                map_name_m13[pid] = str(r.get('PLAYER_NAME','Unknown'))
-                if 'eFG%' in df_roles.columns: map_efg_m13[pid] = r.get('eFG%', 0)
-                if 'TS%'  in df_roles.columns: map_ts_m13[pid]  = r.get('TS%',  0)
-                if 'TOV%' in df_roles.columns: map_tov_m13[pid] = r.get('TOV%', 0)
-                if 'ORB%' in df_roles.columns: map_orb_m13[pid] = r.get('ORB%', 0)
-                if 'FTr'  in df_roles.columns: map_ftr_m13[pid] = r.get('FTr',  0)
-                if 'USG%' in df_roles.columns: map_usg_m13[pid] = r.get('USG%', 0)
-    except Exception: pass
-    try:
-        if os.path.exists(FILE_PHOTOS):
-            with open(FILE_PHOTOS, "r", encoding="utf-8") as f: custom_photos_m13 = json.load(f)
-    except Exception: custom_photos_m13 = {}
-    try:
-        if os.path.exists(FILE_LOGOS):
-            with open(FILE_LOGOS, "r", encoding="utf-8") as f: dicc_logos_m13 = json.load(f)
-    except Exception: dicc_logos_m13 = {}
+    global custom_photos_m13, dicc_logos_m13
+    _load_roles_data(map_role_m13, map_pos_m13, map_name_m13, map_efg_m13, map_ts_m13, map_tov_m13, map_orb_m13, map_ftr_m13, map_usg_m13)
+    custom_photos_m13 = {}; dicc_logos_m13 = {}
+    _load_photos_logos(custom_photos_m13, dicc_logos_m13)
 
 def create_signatures_m13(row):
-    players = [safe_id(row['P1_ID']), safe_id(row['P2_ID']), safe_id(row['P3_ID']), safe_id(row['P4_ID']), safe_id(row['P5_ID'])]
-    roles   = [map_role_m13.get(p, "Unknown") for p in players]
-    if "Unknown" in roles: return pd.Series(["Incomplete", "Incomplete"])
-    roles.sort(); players.sort()
-    return pd.Series([" / ".join(roles), "-".join(players)])
+    return _create_signatures(row, map_role_m13)
 
 def generar_html_splits(s_rnd, e_rnd, eq, m_filt):
     cargar_datos_m13()
@@ -997,40 +1066,9 @@ def generar_html_splits(s_rnd, e_rnd, eq, m_filt):
     </div>"""
 
     def render_table_m13(df_subset):
-        t_html = """<div class='table-container'><table><thead><tr>
-            <th class='col-lineup'></th><th>TOTAL MIN</th><th>PTS /40</th><th>PA /40</th><th>NET RTG /40</th>
-            <th style='background:#2c7a7b'>TS% *</th><th style='background:#2c7a7b'>eFG% *</th><th style='background:#2c7a7b'>TOV% *</th>
-            <th style='background:#2c7a7b'>ORB% *</th><th style='background:#2c7a7b'>FTr *</th><th style='background:#2c7a7b'>USG% *</th>
-            </tr></thead><tbody>"""
-        for _, row in df_subset.iterrows():
-            pm_val      = row['NET_RATING']
-            color_class = "text-green" if pm_val > 0 else ("text-red" if pm_val < 0 else "")
-            sign        = "+" if pm_val > 0 else ""
-            p_ids       = row['REAL_LINEUP'].split("-")
-            # Ordenación por posición clásica usando get_classic_pos_order (genérica)
-            p_ids.sort(key=lambda pid: (
-                float(custom_photos_m13.get(pid, {}).get('POS_ORDER', 6))
-                if str(custom_photos_m13.get(pid, {}).get('POS_ORDER', '')).strip() not in ['', 'nan']
-                else get_classic_pos_order(custom_photos_m13.get(pid, {}).get('POSITION', map_pos_m13.get(pid, '')))
-            ))
-            cards_html  = ""
-            avg_efg = avg_ts = avg_tov = avg_orb = avg_ftr = avg_usg = count = 0
-            for pid in p_ids:
-                p_data     = custom_photos_m13.get(pid, {})
-                name_short = get_short_name(p_data.get("PLAYER_NAME", map_name_m13.get(pid, "Unknown")))
-                pos        = p_data.get("POSITION", map_pos_m13.get(pid, "N/A"))
-                role       = map_role_m13.get(pid, "Unknown Role")
-                foto_url   = p_data.get("PHOTO_URL", f"https://imagenes.feb.es/Foto.aspx?c={pid}")
-                cards_html += f"<div class='player-card'><span class='player-role-label'>{role}</span><img src='{foto_url}' onerror=\"this.src='https://via.placeholder.com/50/cbd5e0/ffffff?text=+'\"><br>{name_short}<br><span class='player-pos'>{pos}</span></div>"
-                if pid in map_efg_m13:
-                    avg_efg += map_efg_m13.get(pid,0); avg_ts += map_ts_m13.get(pid,0); avg_tov += map_tov_m13.get(pid,0)
-                    avg_orb += map_orb_m13.get(pid,0); avg_ftr += map_ftr_m13.get(pid,0); avg_usg += map_usg_m13.get(pid,0); count += 1
-            f_efg = f"{(avg_efg/count):.1f}%" if count>0 else "N/A"; f_ts  = f"{(avg_ts/count):.1f}%"  if count>0 else "N/A"
-            f_tov = f"{(avg_tov/count):.1f}%" if count>0 else "N/A"; f_orb = f"{(avg_orb/count):.1f}%" if count>0 else "N/A"
-            f_ftr = f"{(avg_ftr/count):.3f}"  if count>0 else "N/A"; f_usg = f"{(avg_usg/count):.1f}%" if count>0 else "N/A"
-            t_html += f"<tr><td style='text-align:left;padding-left:15px;'><div class='players-flex'>{cards_html}</div></td><td class='metric-big'>{row['MINUTES']:.1f}</td><td class='metric-big text-blue'>{row['PTS_40']:.1f}</td><td class='metric-big text-red'>{row['PA_40']:.1f}</td><td class='metric-huge {color_class}'>{sign}{pm_val}</td><td class='metric-adv' style='color:#B22222'>{f_ts}</td><td class='metric-adv'>{f_efg}</td><td class='metric-adv'>{f_tov}</td><td class='metric-adv'>{f_orb}</td><td class='metric-adv'>{f_ftr}</td><td class='metric-adv'>{f_usg}</td></tr>"
-        t_html += "</tbody></table></div>"
-        return t_html
+        return _render_lineup_table(df_subset, custom_photos_m13, map_name_m13, map_pos_m13, map_role_m13,
+                                    map_efg_m13, map_ts_m13, map_tov_m13, map_orb_m13, map_ftr_m13, map_usg_m13,
+                                    order_fn=lambda pid: _get_player_order(pid, custom_photos_m13, map_pos_m13))
 
     equipos = sorted(efficiency['TEAM'].unique())
     for equipo in equipos:
@@ -1061,82 +1099,21 @@ map_orb_m14 = {}; map_ftr_m14 = {}; map_usg_m14 = {}
 custom_photos_m14 = {}; dicc_logos_m14 = {}
 
 def cargar_datos_m14():
-    global map_role_m14, map_pos_m14, map_name_m14, map_efg_m14, map_ts_m14, map_tov_m14
-    global map_orb_m14, map_ftr_m14, map_usg_m14, custom_photos_m14, dicc_logos_m14
-    map_role_m14.clear(); map_pos_m14.clear(); map_name_m14.clear()
-    map_efg_m14.clear();  map_ts_m14.clear();  map_tov_m14.clear()
-    map_orb_m14.clear();  map_ftr_m14.clear(); map_usg_m14.clear()
-    try:
-        if os.path.exists(FILE_ROLES):
-            df_roles = pd.read_csv(FILE_ROLES)
-            df_roles['TEAM'] = df_roles.get('TEAM', pd.Series()).replace(TEAM_FIXES_GLOBAL)
-            for _, r in df_roles.iterrows():
-                pid = safe_id(str(r.get('PLAYER_ID', '')))
-                map_role_m14[pid] = str(r.get('ROLE_NAME',  'N/A'))
-                map_pos_m14[pid]  = str(r.get('POSITION',   'N/A'))
-                map_name_m14[pid] = str(r.get('PLAYER_NAME','Unknown'))
-                if 'eFG%' in df_roles.columns: map_efg_m14[pid] = r.get('eFG%', 0)
-                if 'TS%'  in df_roles.columns: map_ts_m14[pid]  = r.get('TS%',  0)
-                if 'TOV%' in df_roles.columns: map_tov_m14[pid] = r.get('TOV%', 0)
-                if 'ORB%' in df_roles.columns: map_orb_m14[pid] = r.get('ORB%', 0)
-                if 'FTr'  in df_roles.columns: map_ftr_m14[pid] = r.get('FTr',  0)
-                if 'USG%' in df_roles.columns: map_usg_m14[pid] = r.get('USG%', 0)
-    except Exception: pass
-    try:
-        if os.path.exists(FILE_PHOTOS):
-            with open(FILE_PHOTOS, "r", encoding="utf-8") as f: custom_photos_m14 = json.load(f)
-    except Exception: custom_photos_m14 = {}
-    try:
-        if os.path.exists(FILE_LOGOS):
-            with open(FILE_LOGOS, "r", encoding="utf-8") as f: dicc_logos_m14 = json.load(f)
-    except Exception: dicc_logos_m14 = {}
+    global custom_photos_m14, dicc_logos_m14
+    _load_roles_data(map_role_m14, map_pos_m14, map_name_m14, map_efg_m14, map_ts_m14, map_tov_m14, map_orb_m14, map_ftr_m14, map_usg_m14)
+    custom_photos_m14 = {}; dicc_logos_m14 = {}
+    _load_photos_logos(custom_photos_m14, dicc_logos_m14)
 
 def get_classic_order_m14(pid):
-    p_data  = custom_photos_m14.get(str(pid), {})
-    pos_raw = p_data.get("POSITION", map_pos_m14.get(str(pid), ""))
-    order   = p_data.get("POS_ORDER")
-    if pd.notna(order) and str(order).strip() != "":
-        try: return float(order)
-        except Exception: pass
-    return get_classic_pos_order(pos_raw)
+    return _get_player_order(pid, custom_photos_m14, map_pos_m14)
 
 def create_signatures_m14(row):
-    players = [safe_id(row['P1_ID']), safe_id(row['P2_ID']), safe_id(row['P3_ID']), safe_id(row['P4_ID']), safe_id(row['P5_ID'])]
-    roles   = [map_role_m14.get(p, "Unknown") for p in players]
-    if "Unknown" in roles: return pd.Series(["Incomplete", "Incomplete"])
-    roles.sort(); players.sort()
-    return pd.Series([" / ".join(roles), "-".join(players)])
+    return _create_signatures(row, map_role_m14)
 
 def _render_table_lineups_m14(df_subset):
-    t_html = """<div class='table-container'><table><thead><tr>
-        <th class='col-lineup'></th><th>TOTAL MIN</th><th>PTS /40</th><th>PA /40</th><th>NET RTG /40</th>
-        <th style='background:#2c7a7b'>TS% *</th><th style='background:#2c7a7b'>eFG% *</th><th style='background:#2c7a7b'>TOV% *</th>
-        <th style='background:#2c7a7b'>ORB% *</th><th style='background:#2c7a7b'>FTr *</th><th style='background:#2c7a7b'>USG% *</th>
-        </tr></thead><tbody>"""
-    for _, row in df_subset.iterrows():
-        pm_val      = row['NET_RATING']
-        color_class = "text-green" if pm_val > 0 else ("text-red" if pm_val < 0 else "")
-        sign        = "+" if pm_val > 0 else ""
-        p_ids       = row['REAL_LINEUP'].split("-")
-        p_ids.sort(key=get_classic_order_m14)
-        cards_html  = ""
-        avg_efg = avg_ts = avg_tov = avg_orb = avg_ftr = avg_usg = count = 0
-        for pid in p_ids:
-            p_data     = custom_photos_m14.get(pid, {})
-            name_short = get_short_name(p_data.get("PLAYER_NAME", map_name_m14.get(pid, "Unknown")))
-            pos        = p_data.get("POSITION", map_pos_m14.get(pid, "N/A"))
-            role       = map_role_m14.get(pid, "Unknown Role")
-            foto_url   = p_data.get("PHOTO_URL", f"https://imagenes.feb.es/Foto.aspx?c={pid}")
-            cards_html += f"<div class='player-card'><span class='player-role-label'>{role}</span><img src='{foto_url}' onerror=\"this.src='https://via.placeholder.com/50/cbd5e0/ffffff?text=+'\"><br>{name_short}<br><span class='player-pos'>{pos}</span></div>"
-            if pid in map_efg_m14:
-                avg_efg += map_efg_m14.get(pid,0); avg_ts += map_ts_m14.get(pid,0); avg_tov += map_tov_m14.get(pid,0)
-                avg_orb += map_orb_m14.get(pid,0); avg_ftr += map_ftr_m14.get(pid,0); avg_usg += map_usg_m14.get(pid,0); count += 1
-        f_efg = f"{(avg_efg/count):.1f}%" if count>0 else "N/A"; f_ts  = f"{(avg_ts/count):.1f}%"  if count>0 else "N/A"
-        f_tov = f"{(avg_tov/count):.1f}%" if count>0 else "N/A"; f_orb = f"{(avg_orb/count):.1f}%" if count>0 else "N/A"
-        f_ftr = f"{(avg_ftr/count):.3f}"  if count>0 else "N/A"; f_usg = f"{(avg_usg/count):.1f}%" if count>0 else "N/A"
-        t_html += f"<tr><td style='text-align:left;padding-left:15px;'><div class='players-flex'>{cards_html}</div></td><td class='metric-big'>{row['MINUTES']:.1f}</td><td class='metric-big text-blue'>{row['PTS_40']:.1f}</td><td class='metric-big text-red'>{row['PA_40']:.1f}</td><td class='metric-huge {color_class}'>{sign}{pm_val}</td><td class='metric-adv' style='color:#B22222'>{f_ts}</td><td class='metric-adv'>{f_efg}</td><td class='metric-adv'>{f_tov}</td><td class='metric-adv'>{f_orb}</td><td class='metric-adv'>{f_ftr}</td><td class='metric-adv'>{f_usg}</td></tr>"
-    t_html += "</tbody></table></div>"
-    return t_html
+    return _render_lineup_table(df_subset, custom_photos_m14, map_name_m14, map_pos_m14, map_role_m14,
+                                map_efg_m14, map_ts_m14, map_tov_m14, map_orb_m14, map_ftr_m14, map_usg_m14,
+                                order_fn=get_classic_order_m14)
 
 def HTML_LINEUPS_AGREGADOS_M14(efficiency, eq, context_str, m_filt):
     df_equipo = efficiency.sort_values(by='NET_RATING', ascending=False)
@@ -1441,53 +1418,12 @@ def generar_html_liga_lineups(m_filt: int = 15):
     logo_feb_b64     = get_image_base64(LOGO_FEB)
     logo_liga_b64    = get_image_base64(LOGO_LIGA)
 
-    def get_order_m16(pid):
-        p_data  = custom_photos_m13.get(str(pid), {})
-        pos_raw = p_data.get("POSITION", map_pos_m13.get(str(pid), ""))
-        order   = p_data.get("POS_ORDER")
-        if pd.notna(order) and str(order).strip() != "":
-            try: return float(order)
-            except Exception: pass
-        return get_classic_pos_order(pos_raw)
-
     def render_table_m16(df_subset):
-        t_html = """<div class='table-container'><table><thead><tr>
-            <th class='col-lineup'></th><th>TOTAL MIN</th><th>PTS /40</th><th>PA /40</th><th>NET RTG /40</th>
-            <th class='bg-ts'>TS% *</th><th class='bg-ts'>eFG% *</th><th class='bg-ts'>TOV% *</th>
-            <th class='bg-ts'>ORB% *</th><th class='bg-ts'>FTr *</th><th class='bg-ts'>USG% *</th>
-            </tr></thead><tbody>"""
-        for _, row in df_subset.iterrows():
-            pm_val      = row['NET_RATING']
-            color_class = "text-green" if pm_val > 0 else ("text-red" if pm_val < 0 else "")
-            sign        = "+" if pm_val > 0 else ""
-            p_ids       = row['REAL_LINEUP'].split("-")
-            p_ids.sort(key=get_order_m16)
-            cards_html  = ""
-            avg_efg = avg_ts = avg_tov = avg_orb = avg_ftr = avg_usg = count = 0
-            for pid in p_ids:
-                p_data     = custom_photos_m13.get(pid, {})
-                name_short = get_short_name(p_data.get("PLAYER_NAME", map_name_m13.get(pid, "Unknown")))
-                pos        = p_data.get("POSITION", map_pos_m13.get(pid, "N/A"))
-                if pd.isna(pos) or str(pos).strip() == "": pos = "N/A"
-                role       = map_role_m13.get(pid, "Unknown")
-                foto_url   = p_data.get("PHOTO_URL", f"https://imagenes.feb.es/Foto.aspx?c={pid}")
-                cards_html += (f"<div class='player-card'><span class='player-role-label'>{role}</span>"
-                               f"<img src='{foto_url}' onerror=\"this.src='https://via.placeholder.com/50/cbd5e0/ffffff?text=+'\">"
-                               f"<br>{name_short}<br><span class='player-pos'>{pos}</span></div>")
-                if pid in map_efg_m13:
-                    avg_efg += map_efg_m13.get(pid,0); avg_ts += map_ts_m13.get(pid,0); avg_tov += map_tov_m13.get(pid,0)
-                    avg_orb += map_orb_m13.get(pid,0); avg_ftr += map_ftr_m13.get(pid,0); avg_usg += map_usg_m13.get(pid,0); count += 1
-            f_ts  = f"{(avg_ts/count):.1f}%"  if count>0 else "N/A"; f_efg = f"{(avg_efg/count):.1f}%" if count>0 else "N/A"
-            f_tov = f"{(avg_tov/count):.1f}%" if count>0 else "N/A"; f_orb = f"{(avg_orb/count):.1f}%" if count>0 else "N/A"
-            f_ftr = f"{(avg_ftr/count):.3f}"  if count>0 else "N/A"; f_usg = f"{(avg_usg/count):.1f}%" if count>0 else "N/A"
-            t_html += (f"<tr><td class='col-lineup'><div class='players-flex'>{cards_html}</div></td>"
-                       f"<td class='metric-adv'>{row['MINUTES']:.1f}</td><td class='metric-adv text-blue'>{row['PTS_40']:.1f}</td>"
-                       f"<td class='metric-adv text-red'>{row['PA_40']:.1f}</td><td class='metric-huge {color_class}'>{sign}{pm_val}</td>"
-                       f"<td class='metric-adv' style='color:#B22222'>{f_ts}</td><td class='metric-adv'>{f_efg}</td>"
-                       f"<td class='metric-adv'>{f_tov}</td><td class='metric-adv'>{f_orb}</td>"
-                       f"<td class='metric-adv'>{f_ftr}</td><td class='metric-adv'>{f_usg}</td></tr>")
-        t_html += "</tbody></table></div>"
-        return t_html
+        return _render_lineup_table(df_subset, custom_photos_m13, map_name_m13, map_pos_m13, map_role_m13,
+                                    map_efg_m13, map_ts_m13, map_tov_m13, map_orb_m13, map_ftr_m13, map_usg_m13,
+                                    order_fn=lambda pid: _get_player_order(pid, custom_photos_m13, map_pos_m13),
+                                    th_style="class='bg-ts'", td_lineup="class='col-lineup'",
+                                    metric_cls="metric-adv", role_fallback="Unknown")
 
     html_content = f"""<!DOCTYPE html><html><head><meta charset="utf-8">
     <title>Advanced Positional Scouting: Lineups — Primera FEB 25/26</title>
