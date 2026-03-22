@@ -371,9 +371,21 @@ def extraer_partido_api(match_id):
     base_url_api = "https://intrafeb.feb.es/LiveStats.API/api/v1"
     try:
         if not os.path.exists(ruta_pbp):
-            data_pbp  = session.get(f"{base_url_api}/KeyFacts/{match_id}", timeout=10).json()
-            pbp_list  = data_pbp.get('PLAYBYPLAY', {}).get('LINES', [])
-            pd.DataFrame(pbp_list).to_csv(ruta_pbp, index=False, encoding='utf-8-sig')
+            # Intentar leer de Supabase primero (más rápido que la API FEB)
+            pbp_from_db = False
+            if db_ok():
+                try:
+                    df_pbp_db = pd.read_sql(
+                        f"SELECT * FROM pbp WHERE match_id = '{match_id}'", _engine)
+                    if not df_pbp_db.empty:
+                        df_pbp_db.to_csv(ruta_pbp, index=False, encoding='utf-8-sig')
+                        pbp_from_db = True
+                except Exception:
+                    pass
+            if not pbp_from_db:
+                data_pbp  = session.get(f"{base_url_api}/KeyFacts/{match_id}", timeout=10).json()
+                pbp_list  = data_pbp.get('PLAYBYPLAY', {}).get('LINES', [])
+                pd.DataFrame(pbp_list).to_csv(ruta_pbp, index=False, encoding='utf-8-sig')
         if not os.path.exists(ruta_box):
             data_box  = session.get(f"{base_url_api}/BoxScore/{match_id}", timeout=10).json()
             teams_box = data_box.get('BOXSCORE', {}).get('TEAM', [])
@@ -1575,10 +1587,19 @@ def health():
                 conn.execute(sql_text("SELECT 1"))
         except Exception:
             db_status = "error"
+    pbp_status = "not checked"
+    if _engine and db_status == "connected":
+        try:
+            with _engine.connect() as conn:
+                cnt = conn.execute(sql_text("SELECT COUNT(*) FROM pbp")).scalar()
+                pbp_status = f"supabase ({cnt} rows)"
+        except Exception:
+            pbp_status = "table not found"
     return JSONResponse(content={
         "status": "ok",
         "database": db_status,
         "data_sources": _last_read_source,
+        "pbp_cache": pbp_status,
     }, status_code=200)
 
 # === MÓDULO 12 ===
