@@ -53,17 +53,23 @@ _TABLE_CSV_MAP = {
     'lineups':  'LINEUPS_PRIMERAFEB_2526.csv',
 }
 
+_last_read_source = {}  # {tabla: "supabase" | "csv" | "empty"}
+
 def read_table(tabla: str, csv_path: str = None) -> pd.DataFrame:
     """Lee datos de Supabase si hay conexión, si no de CSV. Columnas en MAYÚSCULAS."""
     if _engine:
         try:
             df = pd.read_sql(f"SELECT * FROM {tabla}", _engine)
             df.columns = df.columns.str.upper()
+            _last_read_source[tabla] = f"supabase ({len(df)} rows)"
             return df
         except Exception as e:
             print(f"⚠️ Error leyendo {tabla} de BD, fallback a CSV: {e}")
     if csv_path and os.path.exists(csv_path):
-        return pd.read_csv(csv_path)
+        df = pd.read_csv(csv_path)
+        _last_read_source[tabla] = f"csv ({len(df)} rows)"
+        return df
+    _last_read_source[tabla] = "empty"
     return pd.DataFrame()
 
 # ==============================================================================
@@ -1562,7 +1568,18 @@ app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_credentials=False,
 # ── HEALTH ENDPOINT — para keep-alive y UptimeRobot ───────────────────────────
 @app.get("/health")
 def health():
-    return JSONResponse(content={"status": "ok"}, status_code=200)
+    db_status = "connected" if _engine else "not configured"
+    if _engine:
+        try:
+            with _engine.connect() as conn:
+                conn.execute(sql_text("SELECT 1"))
+        except Exception:
+            db_status = "error"
+    return JSONResponse(content={
+        "status": "ok",
+        "database": db_status,
+        "data_sources": _last_read_source,
+    }, status_code=200)
 
 # === MÓDULO 12 ===
 @app.get("/generar", response_class=HTMLResponse)
