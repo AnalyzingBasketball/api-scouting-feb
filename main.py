@@ -706,7 +706,7 @@ def generar_html_quintetos(ruta_pbp_clean, ruta_box_clean, match_id, equipo_loca
     <h2 class="team-section-title">{equipo_local}</h2><div class="table-container"><table><thead><tr><th class="lineups-col">LINEUPS</th><th>MIN</th><th>+/-</th><th>PTS</th><th>PA</th><th>DREB</th><th>OREB</th><th>OPP OREB</th><th>AST</th><th>TO</th><th>ORTG</th><th>DRTG</th><th>eFG%</th><th>TS%</th><th>ORB%</th><th>DRB%</th><th>AST/TO</th><th>PACE</th></tr></thead><tbody>{gen_filas(lineups_local)}</tbody></table></div>
     <h2 class="team-section-title">{equipo_visit}</h2><div class="table-container"><table><thead><tr><th class="lineups-col">LINEUPS</th><th>MIN</th><th>+/-</th><th>PTS</th><th>PA</th><th>DREB</th><th>OREB</th><th>OPP OREB</th><th>AST</th><th>TO</th><th>ORTG</th><th>DRTG</th><th>eFG%</th><th>TS%</th><th>ORB%</th><th>DRB%</th><th>AST/TO</th><th>PACE</th></tr></thead><tbody>{gen_filas(lineups_visitante)}</tbody></table></div>
     <div class="legend-grid"><div class="legend-item"><b>MIN:</b> Minutes played together.<br><b>+/-:</b> Plus/Minus point differential.<br><b>PTS / PA:</b> Points Scored / Allowed.<br><b>DREB / OREB:</b> Defensive / Offensive Rebounds.<br><b>OPP_OREB:</b> Opponent Offensive Rebounds.</div><div class="legend-item"><b>AST:</b> Assists.<br><b>TO:</b> Turnovers.<br><b>AST/TO:</b> Assist to Turnover Ratio.<br><b>ORTG:</b> Offensive Rating.<br><b>DRTG:</b> Defensive Rating.</div><div class="legend-item"><b>eFG%:</b> Effective Field Goal %.<br><b>TS%:</b> True Shooting %.<br><b>ORB%:</b> Offensive Rebound %.<br><b>DRB%:</b> Defensive Rebound %.<br><b>PACE:</b> Possessions per 40 min.</div></div>
-    <div class="footer">© 2026 Analizing Basketball | <a href='https://www.analizingbasketball.com' target='_blank'>www.analizingbasketball.com</a></div>
+    <div class="footer">© 2026 Analyzing Basketball | <a href='https://www.analyzingbasketball.com' target='_blank'>www.analyzingbasketball.com</a></div>
     </body></html>"""
 
     ruta_final = os.path.join(REPORTS_DIR, f"Lineup_Report_{match_id}_{limpiar_texto_archivo(equipo_local)}_vs_{limpiar_texto_archivo(equipo_visit)}.html")
@@ -864,7 +864,7 @@ def generar_html_boxscore(ruta_box_clean, ruta_pbp_clean, match_id, equipo_local
     <div class="scores">{' | '.join(q_scores)}<br><span style="font-weight:normal;font-size:13px;color:#a0aec0;">Match Date: {fecha_partido}</span></div></div></div>
     {html_tables}
     <div class="legend-grid"><div class="legend-item"><b>PIC/PLAYER:</b> Player Info.<br><b>S:</b> Starter.<br><b>MIN:</b> Minutes.<br><b>PTS:</b> Points.<br><b>PIR:</b> Performance Index Rating.<br><b>+/-:</b> Plus/Minus.</div><div class="legend-item"><b>ORB:</b> Off. Rebounds.<br><b>DRB:</b> Def. Rebounds.<br><b>TRB:</b> Total Rebounds.<br><b>AST:</b> Assists.<br><b>STL:</b> Steals.<br><b>TOV:</b> Turnovers.</div><div class="legend-item"><b>BLK:</b> Blocks.<br><b>PFD:</b> Fouls Drawn.<br><b>PF:</b> Fouls Committed.<br><b>2PM/A:</b> 2PT Made/Att.<br><b>3PM/A:</b> 3PT Made/Att.<br><b>FTM/A:</b> FT Made/Att.</div><div class="legend-item"><b>GmSc:</b> Game Score.<br><b>TS%:</b> True Shooting %.<br><b>eFG%:</b> Eff. Field Goal %.<br><b>3PAr:</b> 3PT Attempt Rate.<br><b>FTr:</b> FT Rate.<br><b>USG%:</b> Usage %.</div><div class="legend-item"><b>ORB%/DRB%/TRB%:</b> Rebound %.<br><b>AST%:</b> Assist %.<br><b>STL%/BLK%:</b> Steal/Block %.<br><b>TOV%:</b> Turnover %.<br><b>PPP:</b> Points Per Possession.<br><b>PPS:</b> Points Per Shot.</div></div>
-    <div class="footer">© 2026 Analizing Basketball | <a href='https://www.analizingbasketball.com' target='_blank'>www.analizingbasketball.com</a></div>
+    <div class="footer">© 2026 Analyzing Basketball | <a href='https://www.analyzingbasketball.com' target='_blank'>www.analyzingbasketball.com</a></div>
     </body></html>"""
 
     ruta_final = os.path.join(REPORTS_DIR, f"Boxscore_{match_id}_{limpiar_texto_archivo(equipo_local)}_vs_{limpiar_texto_archivo(equipo_visit)}.html")
@@ -1083,7 +1083,7 @@ def generar_html_splits(s_rnd, e_rnd, eq, m_filt):
         if not bottom3.empty: html_content += f"<div class='table-title title-bot'>Least Efficient Lineups ({round_title})</div>{render_table_m13(bottom3)}"
         html_content += "</div>"
 
-    html_content += '<div class="footer">© 2026 Analizing Basketball | <a href="https://www.analizingbasketball.com" target="_blank">www.analizingbasketball.com</a></div></body></html>'
+    html_content += '<div class="footer">© 2026 Analyzing Basketball | <a href="https://www.analyzingbasketball.com" target="_blank">www.analyzingbasketball.com</a></div></body></html>'
 
     eq_f       = eq.replace(" ","_") if eq != "TODOS" else "ALL_TEAMS"
     ruta_final = os.path.join(REPORTS_DIR, f"SPLIT_J{s_rnd}_J{e_rnd}_{eq_f}.html")
@@ -1165,7 +1165,7 @@ def HTML_LINEUPS_AGREGADOS_M14(efficiency, eq, context_str, m_filt):
     <div class="team-section"><div class="team-title-block"><img src="{logo_url}" class="team-shield"><h2>{eq}</h2></div>
     <div class="table-title title-top">Most Efficient Lineups</div>{_render_table_lineups_m14(top3)}"""
     if not bottom3.empty: html_content += f"<div class='table-title title-bot'>Least Efficient Lineups</div>{_render_table_lineups_m14(bottom3)}"
-    html_content += "</div><div class='footer'>© 2026 Analizing Basketball | <a href='https://www.analizingbasketball.com' target='_blank'>www.analizingbasketball.com</a></div></body></html>"
+    html_content += "</div><div class='footer'>© 2026 Analyzing Basketball | <a href='https://www.analyzingbasketball.com' target='_blank'>www.analyzingbasketball.com</a></div></body></html>"
     return html_content
 
 def HTML_BOXSCORE_AGREGADO_M14(df_all_box, eq_objetivo, context_str, team_games_count):
@@ -1386,7 +1386,7 @@ def HTML_BOXSCORE_AGREGADO_M14(df_all_box, eq_objetivo, context_str, team_games_
     <div class="scores">AGGREGATED BOXSCORE (PER GAME)<br><span style="font-weight:600;font-size:17px;color:#718096;">{context_str}</span></div></div></div>
     {html_tables}
     <div class="legend-grid"><div class="legend-item"><b>PIC/PLAYER:</b> Player Info.<br><b>GP:</b> Games Played.<br><b>GS:</b> Games Started.<br><b>MIN:</b> Minutes.<br><b>PTS:</b> Points.<br><b>PIR:</b> Performance Index Rating.<br><b>+/-:</b> Plus/Minus.</div><div class="legend-item"><b>ORB:</b> Off. Rebounds.<br><b>DRB:</b> Def. Rebounds.<br><b>TRB:</b> Total Rebounds.<br><b>AST:</b> Assists.<br><b>STL:</b> Steals.<br><b>TOV:</b> Turnovers.</div><div class="legend-item"><b>BLK:</b> Blocks.<br><b>PFD:</b> Fouls Drawn.<br><b>PF:</b> Fouls Committed.<br><b>2PM/A:</b> 2PT Made/Att.<br><b>3PM/A:</b> 3PT Made/Att.<br><b>FTM/A:</b> FT Made/Att.</div><div class="legend-item"><b>GmSc:</b> Game Score.<br><b>TS%:</b> True Shooting %.<br><b>eFG%:</b> Eff. Field Goal %.<br><b>3PAr:</b> 3PT Attempt Rate.<br><b>FTr:</b> FT Rate.<br><b>USG%:</b> Usage %.</div><div class="legend-item"><b>ORB%/DRB%/TRB%:</b> Rebound %.<br><b>AST%:</b> Assist %.<br><b>STL%/BLK%:</b> Steal/Block %.<br><b>TOV%:</b> Turnover %.<br><b>PPP:</b> Points Per Possession.<br><b>PPS:</b> Points Per Shot.</div></div>
-    <div class="footer">© 2026 Analizing Basketball | <a href='https://www.analizingbasketball.com' target='_blank'>www.analizingbasketball.com</a></div>
+    <div class="footer">© 2026 Analyzing Basketball | <a href='https://www.analyzingbasketball.com' target='_blank'>www.analyzingbasketball.com</a></div>
     </body></html>"""
     return html
 
@@ -1501,7 +1501,7 @@ def generar_html_liga_lineups(m_filt: int = 15):
 
     html_content += f"""<div class="footer">
         <img src="data:image/png;base64,{logo_empresa_b64}" style="height:18px;vertical-align:middle;margin-right:10px;" onerror="this.style.display='none'">
-        © 2026 Analizing Basketball | <a href="https://www.analizingbasketball.com" target="_blank">www.analizingbasketball.com</a>
+        © 2026 Analyzing Basketball | <a href="https://www.analyzingbasketball.com" target="_blank">www.analyzingbasketball.com</a>
     </div></body></html>"""
 
     set_html_cache(f"liga_lineups_m{m_filt}", html_content)
