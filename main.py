@@ -47,7 +47,7 @@ def set_html_cache(key: str, html: str):
             conn.commit()
     except Exception: pass
 
-# Mapa de tabla Supabase → CSV fallback
+# Mapa de tabla Supabase → CSV fallback (Primera FEB por defecto)
 _TABLE_CSV_MAP = {
     'boxscore': 'BOXSCORE_PRIMERAFEB_2526.csv',
     'lineups':  'LINEUPS_PRIMERAFEB_2526.csv',
@@ -55,9 +55,9 @@ _TABLE_CSV_MAP = {
 
 _last_read_source = {}  # {tabla: "supabase" | "csv" | "empty"}
 
-def read_table(tabla: str, csv_path: str = None) -> pd.DataFrame:
-    """Lee datos de Supabase si hay conexión, si no de CSV. Columnas en MAYÚSCULAS."""
-    if _engine:
+def read_table(tabla: str, csv_path: str = None, bypass_db: bool = False) -> pd.DataFrame:
+    """Lee datos de Supabase si hay conexión (y no bypass_db), si no de CSV. Columnas en MAYÚSCULAS."""
+    if _engine and not bypass_db:
         try:
             df = pd.read_sql(f"SELECT * FROM {tabla}", _engine)
             df.columns = df.columns.str.upper()
@@ -95,6 +95,50 @@ FILE_PHOTOS   = os.path.join(DATA_DIR, "raw_data", "PLAYER_NAMES_DICT.json")
 FILE_LOGOS    = os.path.join(DATA_DIR, "logos_equipos.json")
 FILE_CALENDAR = os.path.join(DATA_DIR, "CALENDAR_PRIMERAFEB_2526.csv")
 FILE_MASTER_BOXSCORE = os.path.join(DATA_DIR, "BOXSCORE_PRIMERAFEB_2526.csv")
+
+# ==============================================================================
+# COMPETICIONES SOPORTADAS
+# ==============================================================================
+COMPETITIONS = {
+    'primerafeb':  {'name': 'Primera FEB',  'url': 'https://www.feb.es/competiciones/calendario/primerafeb/1/2025',     'slug': 'PRIMERAFEB',  'logo': 'primera_feb.png'},
+    'lfendesa':    {'name': 'LF Endesa',    'url': 'https://www.feb.es/competiciones/calendario/lfendesa/4/2025',       'slug': 'LFENDESA',    'logo': None},
+    'lfchallenge': {'name': 'LF Challenge', 'url': 'https://www.feb.es/competiciones/calendario/lfchallenge/67/2025',   'slug': 'LFCHALLENGE', 'logo': None},
+    'segundafeb':  {'name': 'Segunda FEB',  'url': 'https://www.feb.es/competiciones/calendario/segundafeb/2/2025',     'slug': 'SEGUNDAFEB',  'logo': None},
+    'lf2':         {'name': 'LF-2',         'url': 'https://www.feb.es/competiciones/calendario/lf2/9/2025',            'slug': 'LF2',         'logo': None},
+    'tercerafeb':  {'name': 'Tercera FEB',  'url': 'https://www.feb.es/competiciones/calendario/tercerafeb/3/2025',     'slug': 'TERCERAFEB',  'logo': None},
+    'ligau':       {'name': 'Liga U',       'url': 'https://www.feb.es/competiciones/calendario/ligau/74/2025',         'slug': 'LIGAU',       'logo': None},
+}
+
+def get_comp_config(liga: str) -> dict:
+    """Devuelve la configuración de rutas y metadatos para una competición."""
+    comp_key = liga.lower().strip()
+    if comp_key not in COMPETITIONS:
+        comp_key = 'primerafeb'
+    comp  = COMPETITIONS[comp_key]
+    slug  = comp['slug']
+    # Logo de liga: usa el fichero específico si existe, si no cae a feb.png
+    logo_file = comp.get('logo')
+    logo_liga_path = (os.path.join(BASE_DIR, f"images/{logo_file}")
+                      if logo_file and os.path.exists(os.path.join(BASE_DIR, f"images/{logo_file}"))
+                      else os.path.join(BASE_DIR, "images/feb.png"))
+    # El fichero de roles para Primera FEB no lleva sufijo (fichero heredado)
+    roles_path = (os.path.join(DATA_DIR, 'PLAYER_ROLES_FINAL_2526.csv')
+                  if comp_key == 'primerafeb'
+                  else os.path.join(DATA_DIR, f'PLAYER_ROLES_FINAL_{slug}_2526.csv'))
+    return {
+        'comp_key':    comp_key,
+        'comp_name':   comp['name'],
+        'comp_url':    comp['url'],
+        'slug':        slug,
+        'bypass_db':   comp_key != 'primerafeb',
+        'logo_liga':   logo_liga_path,
+        'roles':       roles_path,
+        'lineups':     os.path.join(DATA_DIR, f'LINEUPS_{slug}_2526.csv'),
+        'calendar':    os.path.join(DATA_DIR, f'CALENDAR_{slug}_2526.csv'),
+        'boxscore':    os.path.join(DATA_DIR, f'BOXSCORE_{slug}_2526.csv'),
+        'logos':       FILE_LOGOS,
+        'photos':      FILE_PHOTOS,
+    }
 
 # ==============================================================================
 # 2. FUNCIONES GLOBALES DE AYUDA
@@ -225,9 +269,11 @@ def cargar_roles_m12():
     except Exception as e:
         print(f"⚠️ Error M12 Roles: {e}")
 
-def extraer_diccionario_logos():
+def extraer_diccionario_logos(comp_url: str = None):
+    if comp_url is None:
+        comp_url = "https://www.feb.es/competiciones/calendario/primerafeb/1/2025"
     try:
-        r    = requests.get("https://www.feb.es/competiciones/calendario/primerafeb/1/2025", headers=HEADERS_WEB)
+        r    = requests.get(comp_url, headers=HEADERS_WEB)
         soup = BeautifulSoup(r.text, 'html.parser')
         diccionario = {}
         for cont in soup.find_all("div", class_=lambda c: c and "contenedorLogoEquipoCalendario" in c):
@@ -240,9 +286,11 @@ def extraer_diccionario_logos():
             json.dump(diccionario, f, ensure_ascii=False, indent=4)
     except Exception: pass
 
-def construir_calendario_maestro():
+def construir_calendario_maestro(comp_url: str = None):
+    if comp_url is None:
+        comp_url = "https://www.feb.es/competiciones/calendario/primerafeb/1/2025"
     try:
-        r    = requests.get("https://www.feb.es/competiciones/calendario/primerafeb/1/2025", headers=HEADERS_WEB)
+        r    = requests.get(comp_url, headers=HEADERS_WEB)
         soup = BeautifulSoup(r.text, 'html.parser')
         datos = []
         for col in soup.find_all('div', class_='columna'):
@@ -268,8 +316,10 @@ def construir_calendario_maestro():
         pd.DataFrame(datos).drop_duplicates(subset=['match_id']).to_csv(FILE_CALENDAR, index=False, encoding='utf-8-sig')
     except Exception: pass
 
-def obtener_partidos_jornada(jornada_id):
-    res  = requests.get("https://www.feb.es/competiciones/calendario/primerafeb/1/2025", headers=HEADERS_WEB)
+def obtener_partidos_jornada(jornada_id, comp_url: str = None):
+    if comp_url is None:
+        comp_url = "https://www.feb.es/competiciones/calendario/primerafeb/1/2025"
+    res  = requests.get(comp_url, headers=HEADERS_WEB)
     soup = BeautifulSoup(res.text, 'html.parser')
     datos_partidos = []
     for col in soup.find_all('div', class_='columna'):
@@ -300,13 +350,15 @@ def obtener_partidos_jornada(jornada_id):
 
 
 # ── Lookup de partido desde CSV (sin scraping) ────────────────────────────────
-def buscar_partido_en_csv(equipo: str, jornada: int):
+def buscar_partido_en_csv(equipo: str, jornada: int, boxscore_path: str = None, bypass_db: bool = False):
     """
     Busca el partido de un equipo en una jornada usando el BOXSCORE maestro.
     Retorna None si la jornada no está en el CSV (partido futuro).
     """
+    if boxscore_path is None:
+        boxscore_path = FILE_MASTER_BOXSCORE
     try:
-        df = read_table('boxscore', FILE_MASTER_BOXSCORE)
+        df = read_table('boxscore', boxscore_path, bypass_db=bypass_db)
         if df.empty:
             return None
         df['TEAM'] = df['TEAM'].replace(TEAM_FIXES_GLOBAL)
@@ -325,10 +377,12 @@ def buscar_partido_en_csv(equipo: str, jornada: int):
         return None
 
 # ── FALLBACK: scraping feb.es (solo para jornadas no en el CSV) ───────────────
-def obtener_partido_por_scraping(equipo: str, jornada: int):
+def obtener_partido_por_scraping(equipo: str, jornada: int, comp_url: str = None):
     """Scraping de feb.es como fallback para jornadas futuras no en el CSV."""
+    if comp_url is None:
+        comp_url = "https://www.feb.es/competiciones/calendario/primerafeb/1/2025"
     try:
-        res  = requests.get("https://www.feb.es/competiciones/calendario/primerafeb/1/2025", headers=HEADERS_WEB, timeout=10)
+        res  = requests.get(comp_url, headers=HEADERS_WEB, timeout=10)
         soup = BeautifulSoup(res.text, 'html.parser')
         for col in soup.find_all('div', class_='columna'):
             h1 = col.find('h1', class_='titulo-modulo')
@@ -986,10 +1040,12 @@ def cargar_datos_m13():
 def create_signatures_m13(row):
     return _create_signatures(row, map_role_m13)
 
-def generar_html_splits(s_rnd, e_rnd, eq, m_filt):
+def generar_html_splits(s_rnd, e_rnd, eq, m_filt, comp_config: dict = None):
+    if comp_config is None:
+        comp_config = get_comp_config('primerafeb')
     cargar_datos_m13()
 
-    df_lineups_master = read_table('lineups', FILE_LINEUPS)
+    df_lineups_master = read_table('lineups', comp_config['lineups'], bypass_db=comp_config['bypass_db'])
     if df_lineups_master.empty:
         raise HTTPException(status_code=404, detail="No hay datos de lineups disponibles.")
     df_lineups_master['TEAM'] = df_lineups_master.get('TEAM', pd.Series()).replace(TEAM_FIXES_GLOBAL)
@@ -1023,9 +1079,10 @@ def generar_html_splits(s_rnd, e_rnd, eq, m_filt):
 
     logo_empresa_b64 = get_image_base64(LOGO_EMPRESA)
     logo_feb_b64     = get_image_base64(LOGO_FEB)
-    logo_liga_b64    = get_image_base64(LOGO_LIGA)
+    logo_liga_b64    = get_image_base64(comp_config['logo_liga'])
     eq_name_display  = eq if eq != "TODOS" else "League Wide"
     round_title      = f"Rounds {s_rnd} to {e_rnd}"
+    comp_name        = comp_config['comp_name']
 
     html_content = f"""<!DOCTYPE html><html><head><meta charset="utf-8"><title>Tactical Splits: {eq_name_display}</title>
     <style>
@@ -1057,7 +1114,7 @@ def generar_html_splits(s_rnd, e_rnd, eq, m_filt):
         .footer{{position:fixed;bottom:0;left:0;width:100%;background:#2d3748;color:#cbd5e0;text-align:center;padding:15px 0;font-size:13px;border-top:3px solid #ed8936;}}
     </style></head><body>
     <div class="top-banner"><div class="top-logos"><img src="data:image/png;base64,{logo_feb_b64}" class="logo-side"><img src="data:image/png;base64,{logo_empresa_b64}" class="logo-center"><img src="data:image/png;base64,{logo_liga_b64}" class="logo-side"></div>
-    <div class="header-title-block"><h1>Tactical Splits Slicer</h1><div class="subtitle">Primera FEB | {round_title} | Filter: Min {m_filt} minutes played</div></div></div>
+    <div class="header-title-block"><h1>Tactical Splits Slicer</h1><div class="subtitle">{comp_name} | {round_title} | Filter: Min {m_filt} minutes played</div></div></div>
     <div class="legend-grid">
         <div class="legend-item"><b>TOTAL MIN:</b> Split minutes.<br><b>PTS /40:</b> Proj. points per 40 mins.<br><b>PA /40:</b> Proj. allowed per 40 mins.</div>
         <div class="legend-item"><b>NET RTG /40:</b> Point diff. per 40 mins.<br><b>TS% *:</b> True Shooting %.<br><b>eFG% *:</b> Effective Field Goal %.</div>
@@ -1393,15 +1450,19 @@ def HTML_BOXSCORE_AGREGADO_M14(df_all_box, eq_objetivo, context_str, team_games_
 # ==============================================================================
 # MÓDULO 16: MEGA-INFORME LIGA COMPLETA
 # ==============================================================================
-def generar_html_liga_lineups(m_filt: int = 15):
-    # ── CACHÉ 24H: devolver HTML cacheado de BD si existe ──
-    cache_key = f"liga_lineups_m{m_filt}"
-    cached    = get_html_cache(cache_key)
-    if cached: return cached
+def generar_html_liga_lineups(m_filt: int = 15, comp_config: dict = None):
+    if comp_config is None:
+        comp_config = get_comp_config('primerafeb')
+    comp_name = comp_config['comp_name']
+    # ── CACHÉ 24H: devolver HTML cacheado de BD si existe (solo Primera FEB) ──
+    cache_key = f"liga_lineups_m{m_filt}_{comp_config['comp_key']}"
+    if not comp_config['bypass_db']:
+        cached = get_html_cache(cache_key)
+        if cached: return cached
 
     cargar_datos_m13()
 
-    df_lineups = read_table('lineups', FILE_LINEUPS)
+    df_lineups = read_table('lineups', comp_config['lineups'], bypass_db=comp_config['bypass_db'])
     if df_lineups.empty:
         raise HTTPException(status_code=404, detail="No hay datos de lineups disponibles.")
     df_lineups['TEAM'] = df_lineups.get('TEAM', pd.Series()).replace(TEAM_FIXES_GLOBAL)
@@ -1416,7 +1477,7 @@ def generar_html_liga_lineups(m_filt: int = 15):
 
     logo_empresa_b64 = get_image_base64(LOGO_EMPRESA)
     logo_feb_b64     = get_image_base64(LOGO_FEB)
-    logo_liga_b64    = get_image_base64(LOGO_LIGA)
+    logo_liga_b64    = get_image_base64(comp_config['logo_liga'])
 
     def render_table_m16(df_subset):
         return _render_lineup_table(df_subset, custom_photos_m13, map_name_m13, map_pos_m13, map_role_m13,
@@ -1426,7 +1487,7 @@ def generar_html_liga_lineups(m_filt: int = 15):
                                     metric_cls="metric-adv", role_fallback="Unknown")
 
     html_content = f"""<!DOCTYPE html><html><head><meta charset="utf-8">
-    <title>Advanced Positional Scouting: Lineups — Primera FEB 25/26</title>
+    <title>Advanced Positional Scouting: Lineups — {comp_name} 25/26</title>
     <style>
         @page{{size:landscape;margin:10mm 15mm 20mm 15mm;}}
         body{{font-family:'Segoe UI',Tahoma,Geneva,Verdana,sans-serif;background:#f4f6f9;color:#1a202c;margin:0;padding:20px;padding-bottom:70px;}}
@@ -1466,7 +1527,7 @@ def generar_html_liga_lineups(m_filt: int = 15):
         <img src="data:image/png;base64,{logo_empresa_b64}" class="logo-center" onerror="this.style.display='none'">
         <img src="data:image/png;base64,{logo_liga_b64}" class="logo-side" onerror="this.style.display='none'">
     </div><div class="header-title-block"><h1>Advanced Positional Scouting: Lineups</h1>
-    <div class="subtitle">Full League Analysis — Primera FEB 25/26 | Min. {m_filt} minutes played per lineup</div></div></div>
+    <div class="subtitle">Full League Analysis — {comp_name} 25/26 | Min. {m_filt} minutes played per lineup</div></div></div>
     <div class="legend-grid">
         <div class="legend-item"><b>TOTAL MIN:</b> Minutes played together.<br><b>PTS /40:</b> Points projected to 40 min.<br><b>PA /40:</b> Points allowed projected to 40 min.</div>
         <div class="legend-item"><b>NET RTG /40:</b> Net point diff. per 40 min.<br><b>TS% *:</b> Avg. True Shooting %.<br><b>eFG% *:</b> Avg. Effective Field Goal %.</div>
@@ -1504,7 +1565,7 @@ def generar_html_liga_lineups(m_filt: int = 15):
         © 2026 Analizing Basketball | <a href="https://www.analizingbasketball.com" target="_blank">www.analizingbasketball.com</a>
     </div></body></html>"""
 
-    set_html_cache(f"liga_lineups_m{m_filt}", html_content)
+    set_html_cache(cache_key, html_content)
     return html_content
 
 # ==============================================================================
@@ -1538,24 +1599,35 @@ def health():
         "pbp_cache": pbp_status,
     }, status_code=200)
 
+# ── COMPETICIONES — lista de ligas disponibles ────────────────────────────────
+@app.get("/competiciones")
+def listar_competiciones():
+    """Devuelve la lista de competiciones soportadas con sus metadatos."""
+    return JSONResponse(content={
+        key: {"name": v["name"], "url": v["url"], "slug": v["slug"]}
+        for key, v in COMPETITIONS.items()
+    }, status_code=200)
+
 # === MÓDULO 12 ===
 @app.get("/generar", response_class=HTMLResponse)
-def generar_scouting(jornada: int = 22, equipo: str = "MOVISTAR ESTUDIANTES", tipo_reporte: str = "quintetos"):
+def generar_scouting(jornada: int = 22, equipo: str = "MOVISTAR ESTUDIANTES", tipo_reporte: str = "quintetos", liga: str = "primerafeb"):
+    cc = get_comp_config(liga)
     cargar_roles_m12()
-    if not os.path.exists(FILE_LOGOS): extraer_diccionario_logos()
+    if not os.path.exists(cc['logos']): extraer_diccionario_logos(cc['comp_url'])
 
-    partido = buscar_partido_en_csv(equipo, jornada)
+    partido = buscar_partido_en_csv(equipo, jornada, boxscore_path=cc['boxscore'], bypass_db=cc['bypass_db'])
     if partido is None:
-        partido = obtener_partido_por_scraping(equipo, jornada)
+        partido = obtener_partido_por_scraping(equipo, jornada, comp_url=cc['comp_url'])
     if partido is None:
         raise HTTPException(status_code=404, detail=f"No se encontró el partido de {equipo} en la jornada {jornada}.")
     if not partido['jugado']:
         raise HTTPException(status_code=400, detail="El partido aún no se ha disputado.")
 
-    # Devolver caché de BD si existe
-    _cache_key = f"{tipo_reporte.lower()}_{partido['match_id']}"
-    _cached    = get_html_cache(_cache_key)
-    if _cached: return HTMLResponse(content=_cached, status_code=200)
+    # Devolver caché de BD si existe (solo Primera FEB)
+    _cache_key = f"{tipo_reporte.lower()}_{partido['match_id']}_{cc['comp_key']}"
+    if not cc['bypass_db']:
+        _cached = get_html_cache(_cache_key)
+        if _cached: return HTMLResponse(content=_cached, status_code=200)
 
     if not extraer_partido_api(partido['match_id']):
         raise HTTPException(status_code=500, detail="Error al descargar datos del partido.")
@@ -1567,23 +1639,26 @@ def generar_scouting(jornada: int = 22, equipo: str = "MOVISTAR ESTUDIANTES", ti
     else:
         ruta_final = generar_html_boxscore(ruta_box_clean, ruta_pbp_clean, partido['match_id'], partido['equipo_local'], partido['equipo_visitante'], partido['fecha'])
     with open(ruta_final, "r", encoding="utf-8") as f: html_content = f.read()
-    set_html_cache(_cache_key, html_content)
+    if not cc['bypass_db']:
+        set_html_cache(_cache_key, html_content)
     return HTMLResponse(content=html_content, status_code=200)
 
 # === MÓDULO 13 ===
 @app.get("/splits", response_class=HTMLResponse)
-def splits_api(s_rnd: int = 1, e_rnd: int = 22, eq: str = "MOVISTAR ESTUDIANTES", m_filt: int = 10):
+def splits_api(s_rnd: int = 1, e_rnd: int = 22, eq: str = "MOVISTAR ESTUDIANTES", m_filt: int = 10, liga: str = "primerafeb"):
     if s_rnd > e_rnd: raise HTTPException(status_code=400, detail="La jornada de inicio no puede ser posterior a la jornada final.")
-    ruta_final = generar_html_splits(s_rnd, e_rnd, eq, m_filt)
+    cc = get_comp_config(liga)
+    ruta_final = generar_html_splits(s_rnd, e_rnd, eq, m_filt, comp_config=cc)
     with open(ruta_final, "r", encoding="utf-8") as f: html_content = f.read()
     return HTMLResponse(content=html_content, status_code=200)
 
 # === MÓDULO 14 ===
 @app.get("/contextual", response_class=HTMLResponse)
-def generar_contextual(eq: str = "MOVISTAR ESTUDIANTES", venue: str = "ALL", n_games: int = 3, m_filt: int = 10, tipo_reporte: str = "quintetos"):
+def generar_contextual(eq: str = "MOVISTAR ESTUDIANTES", venue: str = "ALL", n_games: int = 3, m_filt: int = 10, tipo_reporte: str = "quintetos", liga: str = "primerafeb"):
+    cc = get_comp_config(liga)
     cargar_datos_m14()
 
-    df_master = read_table('boxscore', os.path.join(DATA_DIR, "BOXSCORE_PRIMERAFEB_2526.csv"))
+    df_master = read_table('boxscore', cc['boxscore'], bypass_db=cc['bypass_db'])
     if df_master.empty:
         raise HTTPException(status_code=404, detail="No hay datos de boxscore disponibles.")
     df_master['TEAM'] = df_master['TEAM'].replace(TEAM_FIXES_GLOBAL)
@@ -1609,7 +1684,7 @@ def generar_contextual(eq: str = "MOVISTAR ESTUDIANTES", venue: str = "ALL", n_g
 
     # ── RAMA QUINTETOS ──────────────────────────────────────────────────────────
     if tipo_reporte.lower() == "quintetos":
-        df_lineups_master = read_table('lineups', FILE_LINEUPS)
+        df_lineups_master = read_table('lineups', cc['lineups'], bypass_db=cc['bypass_db'])
         if df_lineups_master.empty:
             raise HTTPException(status_code=404, detail="No hay datos de lineups disponibles.")
         df_lineups_master['TEAM'] = df_lineups_master.get('TEAM', pd.Series()).replace(TEAM_FIXES_GLOBAL)
@@ -1676,8 +1751,9 @@ def generar_contextual(eq: str = "MOVISTAR ESTUDIANTES", venue: str = "ALL", n_g
 
 # === MÓDULO 16 ===
 @app.get("/liga_lineups", response_class=HTMLResponse)
-def liga_lineups_api(m_filt: int = 15):
-    html_content = generar_html_liga_lineups(m_filt=m_filt)
+def liga_lineups_api(m_filt: int = 15, liga: str = "primerafeb"):
+    cc = get_comp_config(liga)
+    html_content = generar_html_liga_lineups(m_filt=m_filt, comp_config=cc)
     return HTMLResponse(content=html_content, status_code=200)
 
 # ==============================================================================
