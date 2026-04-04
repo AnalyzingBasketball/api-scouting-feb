@@ -32,6 +32,8 @@ COMPETITIONS = {
 
 def get_comp_paths(comp_key: str) -> dict:
     """Devuelve un dict con todas las rutas de ficheros para una competición."""
+    if comp_key not in COMPETITIONS:
+        raise ValueError(f"Competición '{comp_key}' no soportada. Opciones: {list(COMPETITIONS.keys())}")
     comp = COMPETITIONS[comp_key]
     slug = comp['slug']
     # Primera FEB usa la carpeta raw_data raíz (compatibilidad hacia atrás)
